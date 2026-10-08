@@ -8,7 +8,7 @@ Each hung screenshot is a card on the line. Cards are the user's work surface: c
 - `annotate` — press-and-hold (or right-click → Annotate/标注) opens the in-place annotate editor
 - `share` — right-click → 分享… opens the system share sheet (AirDrop/Mail/…); 隔空投送 goes straight to AirDrop
 - `hang-in` — drag any image file onto a hanging card: it is copied into the inbox and a card appears
-- `services` — Finder right-click → "Hang in Tendedero" (NSServices, declared in Info.plist via build-app.sh): selected image files land on the line; files inside the inbox hang as-is, outside files are copied in first
+- `services` — Finder right-click → "Hang" (NSServices, declared in Info.plist via build-app.sh; localized 挂/掛/Colgar via NSMenuItem keys): selected image files land on the line; files inside the inbox hang as-is, outside files are copied in first
 - `drag-to-app` — drag onto another app's window shares the image
 - `drag-to-folder` — drag onto a Finder folder saves/moves the file there
 - `discard` — the × control trashes the file (inbox files only)

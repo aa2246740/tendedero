@@ -67,7 +67,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>NSServices</key>
   <array>
     <dict>
-      <key>NSMenuItem</key><dict><key>default</key><string>Hang in Tendedero</string></dict>
+      <key>NSMenuItem</key><dict>
+        <key>default</key><string>Hang</string>
+        <key>zh-Hans</key><string>挂</string>
+        <key>zh-Hant</key><string>掛</string>
+        <key>es</key><string>Colgar</string>
+      </dict>
       <key>NSMessage</key><string>hangService</string>
       <key>NSPortName</key><string>Tendedero</string>
       <key>NSSendTypes</key>

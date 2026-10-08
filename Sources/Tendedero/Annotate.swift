@@ -33,19 +33,24 @@ final class Annotate: NSObject {
         }
         target = url
 
-        // The canvas fits the image inside most of the screen, never above
+        // The toolbar is pinned to the bottom edge and the canvas lives in
+        // the area above it, so the two can never overlap.
+        let bar = toolbar()
+        let barSize = bar.fittingSize
+        // Pinned low but clear of the Dock zone, which can reach ~80pt.
+        let barY: CGFloat = 88
+        let areaTop = barY + barSize.height + 24
+        let areaH = screen.frame.height - areaTop - 40
+        // The canvas fits the image inside that area, never above
         // its real size — scaling is display-only, marks bake at full res.
-        let maxW = screen.frame.width * 0.78, maxH = screen.frame.height * 0.58
-        let fit = min(1, min(maxW / CGFloat(cg.width), maxH / CGFloat(cg.height)))
+        let maxW = screen.frame.width * 0.8
+        let fit = min(1, min(maxW / CGFloat(cg.width), areaH / CGFloat(cg.height)))
         let size = NSSize(width: CGFloat(cg.width) * fit, height: CGFloat(cg.height) * fit)
 
         let cv = CanvasView(frame: NSRect(origin: .zero, size: size))
         cv.configure(base: cg, ci: ci)
         cv.onKey = { [weak self] event in self?.keyDown(event) ?? false }
         canvas = cv
-
-        let bar = toolbar()
-        let barSize = bar.fittingSize
 
         let panel = KeyPanel(contentRect: screen.frame, styleMask: [.borderless],
                             backing: .buffered, defer: false)
@@ -64,11 +69,10 @@ final class Annotate: NSObject {
         panel.contentView = backdrop
 
         let origin = NSPoint(x: screen.frame.midX - size.width / 2,
-                             y: screen.frame.midY - size.height / 2 + barSize.height / 2 + 20)
+                             y: areaTop + (areaH - size.height) / 2)
         cv.frame.origin = origin
         backdrop.addSubview(cv)
-        bar.frame.origin = NSPoint(x: screen.frame.midX - barSize.width / 2,
-                                   y: origin.y - barSize.height - 12)
+        bar.frame.origin = NSPoint(x: screen.frame.midX - barSize.width / 2, y: barY)
         backdrop.addSubview(bar)
         self.panel = panel
 
@@ -97,6 +101,7 @@ final class Annotate: NSObject {
             b.tag = tool.rawValue
             b.setButtonType(.pushOnPushOff)
             b.font = .systemFont(ofSize: 13, weight: .medium)
+            b.contentTintColor = NSColor(white: 0.15, alpha: 1)
             b.sizeToFit()
             b.frame.origin = NSPoint(x: x, y: 10)
             bar.addSubview(b); toolButtons.append(b)
@@ -114,6 +119,7 @@ final class Annotate: NSObject {
             b.bezelStyle = .inline
             b.isBordered = false
             b.font = .systemFont(ofSize: 13, weight: .medium)
+            b.contentTintColor = NSColor(white: 0.15, alpha: 1)
             if action == #selector(commit) {
                 b.font = .systemFont(ofSize: 13, weight: .semibold)
                 b.contentTintColor = .systemGreen
@@ -125,9 +131,12 @@ final class Annotate: NSObject {
         }
         bar.frame = NSRect(x: 0, y: 0, width: x + 2, height: 40)
         bar.wantsLayer = true
-        bar.layer?.backgroundColor = NSColor(white: 0.16, alpha: 1).cgColor
-        bar.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
-        bar.layer?.borderWidth = 1
+        // White pill, WeChat-style: maximum contrast on the dark backdrop.
+        bar.layer?.backgroundColor = NSColor(white: 0.94, alpha: 1).cgColor
+        bar.layer?.shadowColor = NSColor.black.cgColor
+        bar.layer?.shadowOpacity = 0.4
+        bar.layer?.shadowOffset = NSSize(width: 0, height: -3)
+        bar.layer?.shadowRadius = 10
         bar.layer?.cornerRadius = 20
         return bar
     }
@@ -143,7 +152,7 @@ final class Annotate: NSObject {
         for b in toolButtons {
             let on = b.tag == tool.rawValue
             b.state = on ? .on : .off
-            b.contentTintColor = on ? .controlAccentColor : .labelColor
+            b.contentTintColor = on ? .controlAccentColor : NSColor(white: 0.15, alpha: 1)
         }
     }
 
@@ -221,6 +230,7 @@ final class CanvasView: NSView {
     private var strokeCtx: CGContext?
     private var strokeBounds: CGRect = .zero
     private var penLast: CGPoint?
+    private var lastStamp: CGPoint?
     private var editingText: NSTextField?
 
     private let imageLayer = CALayer()
@@ -410,13 +420,27 @@ final class CanvasView: NSView {
         strokeBounds = .zero
         strokeCtx = nil
         penLast = nil
+        lastStamp = nil
         if tool == .pen { penSegment(to: imagePoint(viewPoint)) }
         else { stamp(imagePoint(viewPoint)) }
     }
 
     override func mouseDragged(with event: NSEvent) {
         let p = imagePoint(convert(event.locationInWindow, from: nil))
-        if tool == .pen { penSegment(to: p) } else { stamp(p) }
+        if tool == .pen { penSegment(to: p); return }
+        // Fast drags jump several stamp widths: walk the segment so the
+        // mosaic/smear stroke stays continuous, WeChat-style.
+        let step = stamp * 0.5
+        var from = lastStamp ?? p
+        lastStamp = p
+        var d = hypot(p.x - from.x, p.y - from.y)
+        while d >= step {
+            from = CGPoint(x: from.x + (p.x - from.x) * step / d,
+                           y: from.y + (p.y - from.y) * step / d)
+            stamp(from)
+            d = hypot(p.x - from.x, p.y - from.y)
+        }
+        stamp(p)
     }
 
     override func mouseUp(with event: NSEvent) {

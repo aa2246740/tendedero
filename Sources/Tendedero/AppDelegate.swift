@@ -393,6 +393,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return NSRect(x: screen.frame.minX, y: screen.frame.maxY - h, width: screen.frame.width, height: h)
     }
 
+    /// The very top edge of a screen. Resting the pointer here reveals the
+    /// line — a deliberate push past the menu bar, so gliding over status
+    /// items on the way to an icon never pops the line down.
+    static func topEdgeBand(of screen: NSScreen) -> NSRect {
+        NSRect(x: screen.frame.minX, y: screen.frame.maxY - 3,
+               width: screen.frame.width, height: 3)
+    }
+
     /// A click anywhere in the top bar of any screen, a menu or an icon, puts the line away.
     private func watchMenuBarClicks() {
         let handler: (NSEvent?) -> Void = { [weak self] _ in
@@ -427,10 +435,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !inMenuBar { menuBarSuppressed = false }
 
         guard isRevealed else {
-            // Resting in the menu bar brings the line down on that screen.
-            // Pushing against the top edge is part of it, and it also works
-            // when another display sits above and the pointer never stops.
-            if let screen = screenUnderPointer, inMenuBar, !menuBarSuppressed,
+            // Resting against the top edge brings the line down on that
+            // screen. It also works when another display sits above and
+            // the pointer never stops.
+            if let screen = screenUnderPointer,
+               Self.topEdgeBand(of: screen).contains(mouse), !menuBarSuppressed,
                !FullScreen.isActive(on: screen) {
                 let since = hotZoneSince ?? now
                 hotZoneSince = since
@@ -441,7 +450,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                         updateCapacity()
                     }
                     refresh()
-                    reveal()
+                    reveal(peekFor: 1.5)
                 }
             } else {
                 hotZoneSince = nil
@@ -451,10 +460,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         updateMousePassThrough(mouse)
 
-        // The line's zone runs from its lowest point up to the top of the
-        // screen, menu bar included, so moving up never hides it.
+        // The line's zone runs from its lowest point up to the bottom of the
+        // menu bar. Reaching into the menu bar counts as leaving, so the line
+        // tucks away and frees the status items when you go up to click one.
         var zone = panel.frame
-        if let screen = panel.screen { zone.size.height = screen.frame.maxY - zone.minY }
+        if let screen = panel.screen { zone.size.height = screen.visibleFrame.maxY - zone.minY }
         let inside = NSMouseInRect(mouse, zone, false)
         if inside && pinned { pinned = false }
 

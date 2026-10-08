@@ -38,3 +38,5 @@ Preconditions: baseline green; ≥1 card hanging (see `line.md` → `hang`).
 - Drop-to-hang: the line must be revealed/pinned first (menu → 显示晾衣绳) — cards only exist as drop targets while visible. `ls` the inbox folder for the new file + `defaults read app.tendedero.Tendedero pegged` for the new url; the source file stays untouched (copy, never move).
 - AirDrop on a VM opens the real 隔空投送 sheet but reports Wi-Fi/Bluetooth off — expected, not a bug.
 - The Services item needs pbs to rescan after install (`/System/Library/CoreServices/pbs -flush`) — on a real install it happens on its own; in Finder it shows at the context menu's bottom, not nested under 服务.
+
+- Fixtures for the Finder-Hang / drop tests must be xattr-free: a `kMDItemIsScreenCapture` xattr makes the watcher auto-hang the file and ruins before/after counts. `cp` of a `screencapture` output preserves xattrs — produce clean fixtures with `sips -s format png src.png --out dst.png`, verify with `xattr -l`. Card order on the line is not pegged order; to prove write-back, diff `ls -la` mtimes / `shasum` across the inbox after Done.

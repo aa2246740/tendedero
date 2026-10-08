@@ -33,3 +33,5 @@ Preconditions: baseline green; inbox mode ON (menu → "Handle screenshots" chec
 - The watcher debounces ~0.2 s; rapid `screencapture` bursts are fine but assert after ≥1 s.
 - Card positions depend on where the screenshot was taken from; assert on COUNT and presence, not pixel coordinates.
 - `screencapture -x` writes synchronously but the OS may still finish metadata async — `sleep 1` before screenshotting the line.
+
+- Menu → Show line reveals but can still tuck itself away after ~a minute of inactivity or when another app takes focus (not a hard pin). If cards vanish mid-run, hover (512,3) to re-reveal; assert state via `pegged`/`ls`, not the visible line.

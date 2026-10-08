@@ -8,6 +8,7 @@ Each hung screenshot is a card on the line. Cards are the user's work surface: c
 - `annotate` — press-and-hold (or right-click → Annotate/标注) opens the in-place annotate editor
 - `share` — right-click → 分享… opens the system share sheet (AirDrop/Mail/…); 隔空投送 goes straight to AirDrop
 - `hang-in` — drag any image file onto a hanging card: it is copied into the inbox and a card appears
+- `services` — Finder right-click → "Hang in Tendedero" (NSServices, declared in Info.plist via build-app.sh): selected image files land on the line; files inside the inbox hang as-is, outside files are copied in first
 - `drag-to-app` — drag onto another app's window shares the image
 - `drag-to-folder` — drag onto a Finder folder saves/moves the file there
 - `discard` — the × control trashes the file (inbox files only)
@@ -36,3 +37,4 @@ Preconditions: baseline green; ≥1 card hanging (see `line.md` → `hang`).
 - Cancel/取消 leaves the file byte-identical (check `ls -la` mtime). Done/完成 rewrites it atomic — same folder, same name.
 - Drop-to-hang: the line must be revealed/pinned first (menu → 显示晾衣绳) — cards only exist as drop targets while visible. `ls` the inbox folder for the new file + `defaults read app.tendedero.Tendedero pegged` for the new url; the source file stays untouched (copy, never move).
 - AirDrop on a VM opens the real 隔空投送 sheet but reports Wi-Fi/Bluetooth off — expected, not a bug.
+- The Services item needs pbs to rescan after install (`/System/Library/CoreServices/pbs -flush`) — on a real install it happens on its own; in Finder it shows at the context menu's bottom, not nested under 服务.

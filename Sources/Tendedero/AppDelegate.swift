@@ -46,6 +46,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var pendingScreen: NSScreen?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Advertises "Hang in Tendedero" inside every app's Services menu:
+        // right-click a file in the Finder and it lands on the line.
+        NSRegisterServicesProvider(self, "Tendedero")
         let host = NSHostingView(rootView: LineView(line: line))
         host.sizingOptions = []
         panel = LinePanel(content: host)
@@ -590,5 +593,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
         }
+    }
+
+    /// Services menu entry point: whatever the sender selected arrives on a
+    /// pasteboard — file URLs from the Finder, image data from elsewhere.
+    /// Everything is copied into the inbox before it hangs.
+    @objc(hangService:userData:error:)
+    private func hangService(_ pboard: NSPasteboard, userData: String?,
+                             error: NSErrorPointer) {
+        var urls = (pboard.readObjects(forClasses: [NSURL.self],
+                                       options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+        if urls.isEmpty, let data = pboard.data(forType: .tiff) ?? pboard.data(forType: .png),
+           let saved = Inbox.save(image: data) {
+            urls = [saved]
+        }
+        for url in Inbox.copyIn(urls) { line.hang(url) }
     }
 }

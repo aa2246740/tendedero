@@ -9,7 +9,7 @@ import SwiftUI
 /// - The Trash discards it.
 /// - Nowhere that accepts it: the photo flies back to the line.
 ///
-/// Click copies, press and hold opens Markup, the corner cross discards.
+/// Click copies, press and hold opens the annotate editor, the corner cross discards.
 struct GrabArea: NSViewRepresentable {
     let item: Pegged
     let line: Line
@@ -45,7 +45,7 @@ struct GrabArea: NSViewRepresentable {
             let menu = NSMenu()
             menu.addItem(ClosureMenuItem(L("Copy", ["es": "Copiar", "zh": "复制", "zh-Hant": "複製"])) { line.copy(id) })
             menu.addItem(ClosureMenuItem(L("Open", ["es": "Abrir", "zh": "打开", "zh-Hant": "打開"])) { line.open(id) })
-            menu.addItem(ClosureMenuItem(L("Markup", ["es": "Marcación", "zh": "标记", "zh-Hant": "標記"])) { line.markup(id) })
+            menu.addItem(ClosureMenuItem(L("Annotate", ["es": "Anotar", "zh": "标注", "zh-Hant": "標註"])) { line.markup(id) })
             menu.addItem(ClosureMenuItem(L("Show in Finder", ["es": "Mostrar en Finder", "zh": "在 Finder 中显示", "zh-Hant": "在 Finder 中顯示"])) { line.reveal(id) })
             let inInbox = line.isInInbox(id)
             if inInbox {
@@ -83,7 +83,7 @@ final class GrabView: NSView, NSDraggingSource {
     private var holdTimer: Timer?
     private var didLongPress = false
 
-    /// How long you hold before Markup opens. Long enough not to fire on a
+    /// How long you hold before Annotate opens. Long enough not to fire on a
     /// slow click, short enough to feel deliberate.
     private static let holdDuration: TimeInterval = 0.45
 

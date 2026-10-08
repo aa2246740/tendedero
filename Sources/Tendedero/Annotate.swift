@@ -54,10 +54,13 @@ final class Annotate: NSObject {
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        let backdrop = NSVisualEffectView(frame: screen.frame)
-        backdrop.material = .hudWindow
-        backdrop.state = .active
-        backdrop.alphaValue = 0.92
+        // Solid dark backdrop: translucency lets the desktop bleed through
+        // and makes the image look washed out.
+        let backdrop = NSView(frame: screen.frame)
+        backdrop.wantsLayer = true
+        backdrop.layer?.backgroundColor = NSColor(white: 0.1, alpha: 1).cgColor
+        panel.isOpaque = true
+        panel.backgroundColor = NSColor(white: 0.1, alpha: 1)
         panel.contentView = backdrop
 
         let origin = NSPoint(x: screen.frame.midX - size.width / 2,
@@ -93,7 +96,7 @@ final class Annotate: NSObject {
             b.isBordered = false
             b.tag = tool.rawValue
             b.setButtonType(.pushOnPushOff)
-            b.font = .systemFont(ofSize: 12, weight: .medium)
+            b.font = .systemFont(ofSize: 13, weight: .medium)
             b.sizeToFit()
             b.frame.origin = NSPoint(x: x, y: 10)
             bar.addSubview(b); toolButtons.append(b)
@@ -110,9 +113,9 @@ final class Annotate: NSObject {
             b.imagePosition = .imageLeading
             b.bezelStyle = .inline
             b.isBordered = false
-            b.font = .systemFont(ofSize: 12, weight: .medium)
+            b.font = .systemFont(ofSize: 13, weight: .medium)
             if action == #selector(commit) {
-                b.font = .systemFont(ofSize: 12, weight: .semibold)
+                b.font = .systemFont(ofSize: 13, weight: .semibold)
                 b.contentTintColor = .systemGreen
             }
             b.sizeToFit()
@@ -120,10 +123,12 @@ final class Annotate: NSObject {
             bar.addSubview(b)
             x += b.frame.width + 14
         }
-        bar.frame = NSRect(x: 0, y: 0, width: x + 2, height: 38)
+        bar.frame = NSRect(x: 0, y: 0, width: x + 2, height: 40)
         bar.wantsLayer = true
-        bar.layer?.backgroundColor = NSColor(white: 0.12, alpha: 0.85).cgColor
-        bar.layer?.cornerRadius = 19
+        bar.layer?.backgroundColor = NSColor(white: 0.16, alpha: 1).cgColor
+        bar.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
+        bar.layer?.borderWidth = 1
+        bar.layer?.cornerRadius = 20
         return bar
     }
 

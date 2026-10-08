@@ -518,6 +518,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         clearItem.isEnabled = line.liveCount > 0
         menu.addItem(clearItem)
 
+        // Browsers keep our Services entry out of their context menus, so
+        // for web images the path is: right-click > Copy image, then this.
+        let pb = NSPasteboard.general
+        let pasteItem = ClosureMenuItem(
+            L("Hang clipboard image", ["es": "Colgar imagen del portapapeles",
+                                       "zh": "挂剪贴板里的图", "zh-Hant": "掛剪貼簿裡的圖"])) { [weak self] in
+            self?.hangClipboard()
+        }
+        pasteItem.isEnabled = (pb.types ?? []).contains { [.fileURL, .png, .tiff].contains($0) }
+        pasteItem.toolTip = L("Copy an image anywhere, then hang it here",
+                              ["es": "Copia una imagen donde sea y cuélgala desde aquí",
+                               "zh": "在任何地方复制图片后，从这里挂上",
+                               "zh-Hant": "在任何地方複製圖片後，從這裡掛上"])
+        menu.addItem(pasteItem)
+
         let inbox = ClosureMenuItem(L("Handle screenshots", ["es": "Encargarse de las capturas", "zh": "接管截图", "zh-Hant": "接管截圖"])) { [weak self] in
             self?.setInbox(!Inbox.isEnabled)
         }
@@ -608,5 +623,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             urls = [saved]
         }
         for url in Inbox.copyIn(urls) { line.hang(url) }
+    }
+
+    /// The clipboard counterpart of the service above, for apps whose
+    /// context menus never show Services (browsers).
+    private func hangClipboard() {
+        let pb = NSPasteboard.general
+        let urls = (pb.readObjects(forClasses: [NSURL.self],
+                                   options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+        if !urls.isEmpty {
+            for url in Inbox.copyIn(urls) { line.hang(url) }
+        } else if let data = pb.data(forType: .png) ?? pb.data(forType: .tiff),
+                  let saved = Inbox.save(image: data) {
+            line.hang(saved)
+        }
     }
 }

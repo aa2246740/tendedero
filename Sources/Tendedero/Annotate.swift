@@ -42,25 +42,58 @@ final class Annotate: NSObject {
     /// Whether the editor is on screen. The line stays tucked away meanwhile.
     var isOpen: Bool { panel != nil }
 
-    enum Tool: Int, CaseIterable {
-        case rect = 1, arrow, pen, text, mosaic, blur
+    /// Raw values are what gets remembered between edits; the number keys
+    /// follow the toolbar order instead.
+    enum Tool: String, CaseIterable {
+        case rect, ellipse, arrow, pen, text, mosaic, blur
 
         var usesColor: Bool { self != .mosaic && self != .blur }
 
-        var symbol: String {
+        /// Dragged out from corner to corner; Shift squares or snaps them.
+        var isShape: Bool { self == .rect || self == .ellipse || self == .arrow }
+
+        var key: Int { Self.allCases.firstIndex(of: self)! + 1 }
+
+        init?(key: Int) {
+            guard Self.allCases.indices.contains(key - 1) else { return nil }
+            self = Self.allCases[key - 1]
+        }
+
+        var icon: NSImage? {
+            let symbol: String
             switch self {
-            case .rect: return "rectangle"
-            case .arrow: return "arrow.up.right"
-            case .pen: return "scribble"
-            case .text: return "textformat"
-            case .mosaic: return "checkerboard.rectangle"
-            case .blur: return "drop.halffull"
+            case .rect: symbol = "rectangle"
+            case .ellipse: symbol = "circle"
+            case .arrow: symbol = "arrow.up.right"
+            case .pen: symbol = "scribble"
+            case .text: return Self.letterIcon("T")
+            case .mosaic: symbol = "checkerboard.rectangle"
+            case .blur: symbol = "drop.halffull"
             }
+            return NSImage(systemSymbolName: symbol, accessibilityDescription: title)?
+                .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))
+        }
+
+        /// SF Symbols has no plain "T"; "textformat" reads as "Aa", which
+        /// nobody takes for "add text".
+        private static func letterIcon(_ letter: String) -> NSImage {
+            let text = NSAttributedString(string: letter, attributes: [
+                .font: NSFont.systemFont(ofSize: 17, weight: .medium),
+                .foregroundColor: NSColor.black,
+            ])
+            let size = text.size()
+            let image = NSImage(size: NSSize(width: ceil(size.width), height: ceil(size.height)), flipped: false) { _ in
+                text.draw(at: .zero)
+                return true
+            }
+            image.isTemplate = true
+            return image
         }
 
         var title: String {
             switch self {
             case .rect: return L("Rectangle", ["es": "Rectángulo", "zh": "矩形", "zh-Hant": "矩形"])
+            case .ellipse: return L("Ellipse", ["es": "Elipse", "zh": "圆形", "zh-Hant": "圓形"])
             case .arrow: return L("Arrow", ["es": "Flecha", "zh": "箭头", "zh-Hant": "箭頭"])
             case .pen: return L("Pen", ["es": "Lápiz", "zh": "画笔", "zh-Hant": "畫筆"])
             case .text: return L("Text", ["es": "Texto", "zh": "文字", "zh-Hant": "文字"])
@@ -110,7 +143,7 @@ final class Annotate: NSObject {
 
     // The last tool, size and color are remembered between edits.
     private var tool: Tool {
-        get { Tool(rawValue: UserDefaults.standard.integer(forKey: "annotateTool")) ?? .rect }
+        get { UserDefaults.standard.string(forKey: "annotateTool").flatMap(Tool.init(rawValue:)) ?? .rect }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "annotateTool") }
     }
     private var sizeIndex: Int {
@@ -190,10 +223,10 @@ final class Annotate: NSObject {
         root.addSubview(bar)
 
         let hint = NSTextField(labelWithString: L(
-            "⏎ Done   ·   Esc Cancel   ·   ⌘Z Undo   ·   1–6 Tools   ·   [ ] Size   ·   ⇧ Straight / square",
-            ["es": "⏎ Listo   ·   Esc Cancelar   ·   ⌘Z Deshacer   ·   1–6 Herramientas   ·   [ ] Tamaño   ·   ⇧ Recto / cuadrado",
-             "zh": "⏎ 完成   ·   Esc 取消   ·   ⌘Z 撤销   ·   1–6 切换工具   ·   [ ] 粗细   ·   ⇧ 水平/正方形",
-             "zh-Hant": "⏎ 完成   ·   Esc 取消   ·   ⌘Z 撤銷   ·   1–6 切換工具   ·   [ ] 粗細   ·   ⇧ 水平/正方形"]))
+            "⏎ Done   ·   Esc Cancel   ·   ⌘Z Undo   ·   1–7 Tools   ·   [ ] Size   ·   ⇧ Straight / square / circle",
+            ["es": "⏎ Listo   ·   Esc Cancelar   ·   ⌘Z Deshacer   ·   1–7 Herramientas   ·   [ ] Tamaño   ·   ⇧ Recto / cuadrado / círculo",
+             "zh": "⏎ 完成   ·   Esc 取消   ·   ⌘Z 撤销   ·   1–7 切换工具   ·   [ ] 粗细   ·   ⇧ 水平/正方形/正圆",
+             "zh-Hant": "⏎ 完成   ·   Esc 取消   ·   ⌘Z 撤銷   ·   1–7 切換工具   ·   [ ] 粗細   ·   ⇧ 水平/正方形/正圓"]))
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = NSColor(white: 1, alpha: 0.38)
         hint.sizeToFit()
@@ -236,8 +269,8 @@ final class Annotate: NSObject {
         toolButtons = [:]
         for t in Tool.allCases {
             if t == .mosaic { stack.addArrangedSubview(Self.divider()) }
-            let b = HUDButton(symbol: t.symbol, fallback: t.title, tip: "\(t.title)   \(t.rawValue)")
-            b.tag = t.rawValue
+            let b = HUDButton(image: t.icon, fallback: t.title, tip: "\(t.title)   \(t.key)")
+            b.tag = t.key
             b.target = self
             b.action = #selector(pickTool(_:))
             toolButtons[t] = b
@@ -342,7 +375,7 @@ final class Annotate: NSObject {
     // MARK: Actions
 
     @objc private func pickTool(_ sender: NSButton) {
-        if let t = Tool(rawValue: sender.tag) { select(t) }
+        if let t = Tool(key: sender.tag) { select(t) }
     }
 
     @objc private func pickSize(_ sender: NSButton) {
@@ -418,7 +451,7 @@ final class Annotate: NSObject {
             default: return false
             }
         }
-        if let n = Int(chars), let t = Tool(rawValue: n) { select(t); return true }
+        if let n = Int(chars), let t = Tool(key: n) { select(t); return true }
         if chars == "[" { sizeIndex -= 1; refreshStyle(); return true }
         if chars == "]" { sizeIndex += 1; refreshStyle(); return true }
         return false
@@ -528,10 +561,14 @@ private final class HUDButton: NSButton {
 
     override var isEnabled: Bool { didSet { refresh() } }
 
-    init(symbol: String, fallback: String, tip: String) {
+    convenience init(symbol: String, fallback: String, tip: String) {
+        self.init(image: NSImage(systemSymbolName: symbol, accessibilityDescription: tip)?
+            .withSymbolConfiguration(.init(pointSize: 14, weight: .medium)), fallback: fallback, tip: tip)
+    }
+
+    init(image: NSImage?, fallback: String, tip: String) {
         super.init(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
-        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)?
-            .withSymbolConfiguration(.init(pointSize: 14, weight: .medium)) {
+        if let image {
             self.image = image
             title = ""
             imagePosition = .imageOnly
@@ -646,35 +683,83 @@ private final class DotButton: NSButton {
     }
 }
 
-/// The one prominent button: an accent-filled "Done".
+/// The one prominent button: an accent-filled "✓ Done". It draws itself,
+/// because NSButton's own image-and-title layout pushes the checkmark and
+/// the label to opposite ends once the button is wider than its content.
 private final class DoneButton: NSButton {
+    private let label: NSAttributedString
+    private static let labelFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    private let check: NSImage?
+    private let gap: CGFloat = 5
+    private var hovering = false { didSet { needsDisplay = true } }
+    private var tracking: NSTrackingArea?
+
     init(title: String, tip: String) {
+        label = NSAttributedString(string: title, attributes: [.font: Self.labelFont, .foregroundColor: NSColor.white])
+        check = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 11, weight: .bold))
+            .map { symbol in
+                NSImage(size: symbol.size, flipped: false) { r in
+                    symbol.draw(in: r)
+                    NSColor.white.set()
+                    r.fill(using: .sourceAtop)
+                    return true
+                }
+            }
         super.init(frame: .zero)
+        self.title = ""
         isBordered = false
         setButtonType(.momentaryPushIn)
         focusRingType = .none
         refusesFirstResponder = true
         toolTip = tip
-        image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 12, weight: .bold))
-        imagePosition = .imageLeading
-        contentTintColor = .white
-        attributedTitle = NSAttributedString(string: " " + title, attributes: [
-            .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
-            .foregroundColor: NSColor.white,
-        ])
-        wantsLayer = true
-        layer?.backgroundColor = NSColor.controlAccentColor.cgColor
-        layer?.cornerRadius = 7
-        layer?.cornerCurve = .continuous
+        setAccessibilityLabel(title)
         translatesAutoresizingMaskIntoConstraints = false
+        let content = (check.map { $0.size.width + gap } ?? 0) + label.size().width
         NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: ceil(intrinsicContentSize.width) + 22),
+            widthAnchor.constraint(equalToConstant: ceil(content) + 28),
             heightAnchor.constraint(equalToConstant: 32),
         ])
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { false }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let accent = NSColor.controlAccentColor.usingColorSpace(.sRGB) ?? .systemBlue
+        let fill = isHighlighted ? accent.blended(withFraction: 0.18, of: .black)
+            : hovering ? accent.blended(withFraction: 0.10, of: .white) : accent
+        (fill ?? accent).setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 7, yRadius: 7).fill()
+
+        // Checkmark and label sit as one centered group, both centered on
+        // the label's cap height so the glyphs line up optically.
+        let textWidth = label.size().width
+        let checkSize = check?.size ?? .zero
+        let content = (check == nil ? 0 : checkSize.width + gap) + textWidth
+        var x = ((bounds.width - content) / 2).rounded()
+        let mid = bounds.midY
+        if let check {
+            check.draw(in: NSRect(x: x, y: (mid - checkSize.height / 2).rounded(),
+                                  width: checkSize.width, height: checkSize.height))
+            x += checkSize.width + gap
+        }
+        let baseline = (mid - Self.labelFont.capHeight / 2).rounded()
+        label.draw(at: NSPoint(x: x, y: baseline + Self.labelFont.descender))
+    }
 }
 
 // MARK: - Canvas
@@ -730,7 +815,7 @@ final class CanvasView: NSView, NSTextFieldDelegate {
 
     /// Everything a mark needs to be previewed and rasterized.
     private enum Mark {
-        case stroke(CGPath, width: CGFloat, color: CGColor)
+        case stroke(CGPath, width: CGFloat, color: CGColor, join: CGLineJoin = .round)
         case fill(CGPath, color: CGColor)
         case brush(CGPath, width: CGFloat, image: CGImage)
         /// Text draws itself: the field's own cell, replayed at image
@@ -917,11 +1002,11 @@ final class CanvasView: NSView, NSTextFieldDelegate {
         return path
     }
 
-    /// Shift makes squares and snaps arrows to 45 degrees.
+    /// Shift makes squares and circles, and snaps arrows to 45 degrees.
     private func constrained(_ a: CGPoint, _ b: CGPoint, shift: Bool) -> CGPoint {
         guard shift else { return b }
         let dx = b.x - a.x, dy = b.y - a.y
-        if tool == .rect {
+        if tool == .rect || tool == .ellipse {
             let side = max(abs(dx), abs(dy))
             return CGPoint(x: a.x + (dx < 0 ? -side : side), y: a.y + (dy < 0 ? -side : side))
         }
@@ -934,13 +1019,13 @@ final class CanvasView: NSView, NSTextFieldDelegate {
         guard let a = dragStart, var b = dragEnd else { return nil }
         let color = style.color.cgColor
         switch tool {
-        case .rect:
+        case .rect, .ellipse:
             b = constrained(a, b, shift: shift)
             let r = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
             guard r.width > 2 || r.height > 2 else { return nil }
-            let corner = min(strokeWidth * 1.2, r.width / 2, r.height / 2)
-            return .stroke(CGPath(roundedRect: r, cornerWidth: corner, cornerHeight: corner, transform: nil),
-                           width: strokeWidth, color: color)
+            return tool == .rect
+                ? .stroke(CGPath(rect: r, transform: nil), width: strokeWidth, color: color, join: .miter)
+                : .stroke(CGPath(ellipseIn: r, transform: nil), width: strokeWidth, color: color)
         case .arrow:
             b = constrained(a, b, shift: shift)
             guard hypot(b.x - a.x, b.y - a.y) > strokeWidth * 2 else { return nil }
@@ -966,9 +1051,10 @@ final class CanvasView: NSView, NSTextFieldDelegate {
         guard let mark else { return }
         var t = CGAffineTransform(scaleX: scale, y: scale)
         switch mark {
-        case let .stroke(path, width, color):
+        case let .stroke(path, width, color, join):
             liveShape.path = path.copy(using: &t)
             liveShape.lineWidth = width * scale
+            liveShape.lineJoin = join == .miter ? .miter : .round
             liveShape.strokeColor = color
             liveShape.fillColor = nil
         case let .fill(path, color):
@@ -1018,13 +1104,13 @@ final class CanvasView: NSView, NSTextFieldDelegate {
     }
 
     override func flagsChanged(with event: NSEvent) {
-        guard dragStart != nil, tool == .rect || tool == .arrow else { return super.flagsChanged(with: event) }
+        guard dragStart != nil, tool.isShape else { return super.flagsChanged(with: event) }
         showLive(currentMark(shift: event.modifierFlags.contains(.shift)))
     }
 
     override func mouseUp(with event: NSEvent) {
         guard dragStart != nil else { return }
-        if tool == .rect || tool == .arrow { dragEnd = imagePoint(event) }
+        if tool.isShape { dragEnd = imagePoint(event) }
         let mark = currentMark(shift: event.modifierFlags.contains(.shift))
         dragStart = nil
         dragEnd = nil
@@ -1039,13 +1125,14 @@ final class CanvasView: NSView, NSTextFieldDelegate {
 
     private func textFont(_ size: CGFloat) -> NSFont { .systemFont(ofSize: size, weight: .semibold) }
 
-    /// Dark ink gets a light halo and light ink a dark one, so text reads on
-    /// any part of a screenshot.
+    /// A soft dark shadow lifts colored and white ink off any screenshot.
+    /// Only near-black ink gets a light halo: a white glow around red or
+    /// blue on a dark screenshot just reads as a smudge.
     private func halo(for color: NSColor, blur: CGFloat) -> NSShadow {
         let s = NSShadow()
         let rgb = color.usingColorSpace(.sRGB) ?? color
-        let light = 0.299 * rgb.redComponent + 0.587 * rgb.greenComponent + 0.114 * rgb.blueComponent > 0.6
-        s.shadowColor = (light ? NSColor.black : NSColor.white).withAlphaComponent(light ? 0.55 : 0.7)
+        let dark = 0.299 * rgb.redComponent + 0.587 * rgb.greenComponent + 0.114 * rgb.blueComponent < 0.2
+        s.shadowColor = dark ? NSColor.white.withAlphaComponent(0.7) : NSColor.black.withAlphaComponent(0.5)
         s.shadowBlurRadius = blur
         s.shadowOffset = .zero
         return s
@@ -1158,7 +1245,10 @@ final class CanvasView: NSView, NSTextFieldDelegate {
 
     private func bounds(of mark: Mark) -> CGRect {
         switch mark {
-        case let .stroke(path, width, _), let .brush(path, width, _):
+        case let .stroke(path, width, _, join):
+            return path.copy(strokingWithWidth: width, lineCap: .round, lineJoin: join, miterLimit: 10)
+                .boundingBoxOfPath
+        case let .brush(path, width, _):
             return path.copy(strokingWithWidth: width, lineCap: .round, lineJoin: .round, miterLimit: 10)
                 .boundingBoxOfPath
         case let .fill(path, _):
@@ -1172,11 +1262,11 @@ final class CanvasView: NSView, NSTextFieldDelegate {
         ctx.saveGState()
         defer { ctx.restoreGState() }
         switch mark {
-        case let .stroke(path, width, color):
+        case let .stroke(path, width, color, join):
             ctx.addPath(path)
             ctx.setLineWidth(width)
             ctx.setLineCap(.round)
-            ctx.setLineJoin(.round)
+            ctx.setLineJoin(join)
             ctx.setStrokeColor(color)
             ctx.strokePath()
         case let .fill(path, color):

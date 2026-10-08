@@ -185,12 +185,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Inbox.wasOffered = true
         let alert = NSAlert()
         alert.messageText = L("Let Tendedero handle your screenshots?",
-                              "¿Quieres que Tendedero se encargue de tus capturas?")
+                              ["es": "¿Quieres que Tendedero se encargue de tus capturas?",
+                               "zh": "让 Tendedero 接管你的截图吗？",
+                               "zh-Hant": "讓 Tendedero 接管你的截圖嗎？"])
         alert.informativeText = L(
             "Screenshots will hang on the line the instant you take them, without the floating thumbnail, and will not pile up on your Desktop. Drag one to a folder to keep it, or discard it with the cross. You can turn this off from the menu bar, and your settings come back when Tendedero quits.",
-            "Las capturas se colgarán al instante, sin la miniatura flotante, y no se acumularán en el Escritorio. Arrastra una a una carpeta para guardarla, o descártala con la cruz. Puedes desactivarlo desde la barra de menús, y tus ajustes vuelven a ser los de antes al salir de Tendedero.")
-        alert.addButton(withTitle: L("Turn on", "Activar"))
-        alert.addButton(withTitle: L("Not now", "Ahora no"))
+            ["es": "Las capturas se colgarán al instante, sin la miniatura flotante, y no se acumularán en el Escritorio. Arrastra una a una carpeta para guardarla, o descártala con la cruz. Puedes desactivarlo desde la barra de menús, y tus ajustes vuelven a ser los de antes al salir de Tendedero.",
+             "zh": "截图会立刻挂到晾衣绳上，没有浮动缩略图，也不会堆在桌面上。把一张拖进文件夹就是保存，点叉叉就是丢弃。随时可从菜单栏关闭，退出 Tendedero 后你的设置会自动还原。",
+             "zh-Hant": "截圖會立刻掛到晾衣繩上，沒有浮動縮圖，也不會堆在桌面上。把一張拖進資料夾就是保存，點叉叉就是丟棄。隨時可從選單列關閉，退出 Tendedero 後你的設定會自動還原。"])
+        alert.addButton(withTitle: L("Turn on", ["es": "Activar", "zh": "打开", "zh-Hant": "打開"]))
+        alert.addButton(withTitle: L("Not now", ["es": "Ahora no", "zh": "以后再说", "zh-Hant": "以後再說"]))
         if let icon = NSImage(named: "Tendedero") ?? NSApp.applicationIconImage { alert.icon = icon }
         NSApp.activate(ignoringOtherApps: true)
         if alert.runModal() == .alertFirstButtonReturn { setInbox(true) }
@@ -497,29 +501,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        let toggleItem = ClosureMenuItem(isRevealed ? L("Hide line", "Ocultar tendedero")
-                                                 : L("Show line", "Mostrar tendedero")) { [weak self] in
+        let toggleItem = ClosureMenuItem(isRevealed ? L("Hide line", ["es": "Ocultar tendedero", "zh": "收起晾衣绳", "zh-Hant": "收起晾衣繩"])
+                                                 : L("Show line", ["es": "Mostrar tendedero", "zh": "显示晾衣绳", "zh-Hant": "顯示晾衣繩"])) { [weak self] in
             self?.toggle()
         }
         toggleItem.keyEquivalent = "t"
         toggleItem.keyEquivalentModifierMask = [.control, .option]
         menu.addItem(toggleItem)
 
-        let clearItem = ClosureMenuItem(L("Take everything down", "Descolgar todo")) { [weak self] in
+        let clearItem = ClosureMenuItem(L("Take everything down", ["es": "Descolgar todo", "zh": "全部取下", "zh-Hant": "全部取下"])) { [weak self] in
             self?.line.clear()
         }
         clearItem.isEnabled = line.liveCount > 0
         menu.addItem(clearItem)
 
-        let inbox = ClosureMenuItem(L("Handle screenshots", "Encargarse de las capturas")) { [weak self] in
+        let inbox = ClosureMenuItem(L("Handle screenshots", ["es": "Encargarse de las capturas", "zh": "接管截图", "zh-Hant": "接管截圖"])) { [weak self] in
             self?.setInbox(!Inbox.isEnabled)
         }
         inbox.state = Inbox.isEnabled ? .on : .off
         inbox.toolTip = L("Screenshots hang instantly and skip the Desktop",
-                          "Las capturas se cuelgan al instante y no pasan por el Escritorio")
+                          ["es": "Las capturas se cuelgan al instante y no pasan por el Escritorio",
+                           "zh": "截图立刻上绳，不经过桌面",
+                           "zh-Hant": "截圖立刻上繩，不經過桌面"])
         menu.addItem(inbox)
 
-        menu.addItem(ClosureMenuItem(L("Open screenshots folder", "Abrir carpeta de capturas")) { [weak self] in
+        menu.addItem(ClosureMenuItem(L("Open screenshots folder", ["es": "Abrir carpeta de capturas", "zh": "打开截图文件夹", "zh-Hant": "打開截圖資料夾"])) { [weak self] in
             guard let self else { return }
             NSWorkspace.shared.open(self.watcher.folder)
         })
@@ -527,38 +533,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let inboxFiles = Inbox.files()
         let inboxSize = ByteCountFormatter.string(fromByteCount: Inbox.size(of: inboxFiles), countStyle: .file)
         let emptyItem = ClosureMenuItem(
-            L("Empty screenshots folder (\(inboxSize))", "Vaciar carpeta de capturas (\(inboxSize))")
+            L("Empty screenshots folder (\(inboxSize))", ["es": "Vaciar carpeta de capturas (\(inboxSize))", "zh": "清空截图文件夹（\(inboxSize)）", "zh-Hant": "清空截圖資料夾（\(inboxSize)）"])
         ) { [weak self] in self?.emptyInbox() }
         emptyItem.isEnabled = !inboxFiles.isEmpty
         emptyItem.toolTip = L("Moves everything in it to the Trash",
-                              "Mueve todo su contenido a la Papelera")
+                              ["es": "Mueve todo su contenido a la Papelera",
+                               "zh": "把里面所有内容移到废纸篓",
+                               "zh-Hant": "把裡面所有內容移到垃圾桶"])
         menu.addItem(emptyItem)
 
         let autoCleanItem = ClosureMenuItem(
-            L("Auto-clean after 7 days", "Limpiar automáticamente tras 7 días")
+            L("Auto-clean after 7 days", ["es": "Limpiar automáticamente tras 7 días", "zh": "7 天后自动清理", "zh-Hant": "7 天後自動清理"])
         ) { [weak self] in self?.toggleAutoClean() }
         autoCleanItem.state = Inbox.autoCleanDays > 0 ? .on : .off
         autoCleanItem.toolTip = L("Moves screenshots in that folder to the Trash once they are 7 days old",
-                                  "Mueve a la Papelera las capturas de esa carpeta al cumplir 7 días")
+                                  ["es": "Mueve a la Papelera las capturas de esa carpeta al cumplir 7 días",
+                                   "zh": "该文件夹里的截图满 7 天后移到废纸篓",
+                                   "zh-Hant": "該資料夾裡的截圖滿 7 天後移到垃圾桶"])
         menu.addItem(autoCleanItem)
 
         menu.addItem(.separator())
 
-        let sound = ClosureMenuItem(L("Sounds", "Sonidos")) { [weak self] in
+        let sound = ClosureMenuItem(L("Sounds", ["es": "Sonidos", "zh": "音效", "zh-Hant": "音效"])) { [weak self] in
             guard let self else { return }
             self.line.soundOn.toggle()
         }
         sound.state = line.soundOn ? .on : .off
         menu.addItem(sound)
 
-        let login = ClosureMenuItem(L("Open at login", "Abrir al iniciar sesión")) {
+        let login = ClosureMenuItem(L("Open at login", ["es": "Abrir al iniciar sesión", "zh": "登录时打开", "zh-Hant": "登入時打開"])) {
             AppDelegate.toggleLaunchAtLogin()
         }
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(login)
 
         menu.addItem(.separator())
-        menu.addItem(ClosureMenuItem(L("Quit Tendedero", "Salir de Tendedero"), key: "q") {
+        menu.addItem(ClosureMenuItem(L("Quit Tendedero", ["es": "Salir de Tendedero", "zh": "退出 Tendedero", "zh-Hant": "退出 Tendedero"]), key: "q") {
             NSApp.terminate(nil)
         })
     }
@@ -572,9 +582,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         } catch {
             let alert = NSAlert()
-            alert.messageText = L("Could not change the login setting", "No se pudo cambiar el inicio de sesión")
+            alert.messageText = L("Could not change the login setting", ["es": "No se pudo cambiar el inicio de sesión", "zh": "无法更改登录设置", "zh-Hant": "無法更改登入設定"])
             alert.informativeText = L("Move Tendedero to the Applications folder and try again.",
-                                      "Mueve Tendedero a la carpeta Aplicaciones y vuelve a intentarlo.")
+                                      ["es": "Mueve Tendedero a la carpeta Aplicaciones y vuelve a intentarlo.",
+                                       "zh": "请把 Tendedero 移到“应用程序”文件夹后重试。",
+                                       "zh-Hant": "請把 Tendedero 移到「應用程式」資料夾後重試。"])
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
         }

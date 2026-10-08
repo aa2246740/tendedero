@@ -43,20 +43,20 @@ struct GrabArea: NSViewRepresentable {
         view.onPressChange = { pressed in line.pressedID = pressed ? id : nil }
         view.menuProvider = {
             let menu = NSMenu()
-            menu.addItem(ClosureMenuItem(L("Copy", "Copiar")) { line.copy(id) })
-            menu.addItem(ClosureMenuItem(L("Open", "Abrir")) { line.open(id) })
-            menu.addItem(ClosureMenuItem(L("Markup", "Marcación")) { line.markup(id) })
-            menu.addItem(ClosureMenuItem(L("Show in Finder", "Mostrar en Finder")) { line.reveal(id) })
+            menu.addItem(ClosureMenuItem(L("Copy", ["es": "Copiar", "zh": "复制", "zh-Hant": "複製"])) { line.copy(id) })
+            menu.addItem(ClosureMenuItem(L("Open", ["es": "Abrir", "zh": "打开", "zh-Hant": "打開"])) { line.open(id) })
+            menu.addItem(ClosureMenuItem(L("Markup", ["es": "Marcación", "zh": "标记", "zh-Hant": "標記"])) { line.markup(id) })
+            menu.addItem(ClosureMenuItem(L("Show in Finder", ["es": "Mostrar en Finder", "zh": "在 Finder 中显示", "zh-Hant": "在 Finder 中顯示"])) { line.reveal(id) })
             let inInbox = line.isInInbox(id)
             if inInbox {
-                menu.addItem(ClosureMenuItem(L("Save to Desktop", "Guardar en el Escritorio")) { line.saveToDesktop(id) })
+                menu.addItem(ClosureMenuItem(L("Save to Desktop", ["es": "Guardar en el Escritorio", "zh": "存到桌面", "zh-Hant": "存到桌面"])) { line.saveToDesktop(id) })
             }
             menu.addItem(.separator())
             if inInbox {
-                menu.addItem(ClosureMenuItem(L("Discard", "Descartar")) { line.discard(id) })
+                menu.addItem(ClosureMenuItem(L("Discard", ["es": "Descartar", "zh": "丢弃", "zh-Hant": "丟棄"])) { line.discard(id) })
             } else {
-                menu.addItem(ClosureMenuItem(L("Take down", "Descolgar")) { line.discard(id) })
-                menu.addItem(ClosureMenuItem(L("Move to Trash", "Mover a la Papelera")) { line.trash(id) })
+                menu.addItem(ClosureMenuItem(L("Take down", ["es": "Descolgar", "zh": "取下", "zh-Hant": "取下"])) { line.discard(id) })
+                menu.addItem(ClosureMenuItem(L("Move to Trash", ["es": "Mover a la Papelera", "zh": "移到废纸篓", "zh-Hant": "移到垃圾桶"])) { line.trash(id) })
             }
             return menu
         }

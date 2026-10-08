@@ -21,6 +21,7 @@ enum Inbox {
     private static let enabledKey = "inboxEnabled"
     private static let offeredKey = "inboxOffered"
     private static let savedKey = "inboxSavedSettings"
+    private static let autoCleanKey = "inboxAutoCleanDays"
 
     static let folder: URL = {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -77,5 +78,58 @@ enum Inbox {
     private static func set(_ key: CFString, _ value: Any?) {
         CFPreferencesSetAppValue(key, value as CFPropertyList?, domain)
         CFPreferencesAppSynchronize(domain)
+    }
+
+    // MARK: Reclaiming space
+
+    /// Days after which inbox screenshots are moved to the Trash. 0 = off.
+    static var autoCleanDays: Int {
+        get { UserDefaults.standard.integer(forKey: autoCleanKey) }
+        set { UserDefaults.standard.set(newValue, forKey: autoCleanKey) }
+    }
+
+    /// Everything sitting in the inbox folder. Only ever this folder: files
+    /// anywhere else, like the Desktop, are the user's to keep.
+    static func files() -> [URL] {
+        (try? FileManager.default.contentsOfDirectory(
+            at: folder,
+            includingPropertiesForKeys: [.fileSizeKey, .creationDateKey],
+            options: [.skipsHiddenFiles])) ?? []
+    }
+
+    /// Combined size of the given files, for the menu to report.
+    static func size(of urls: [URL]) -> Int64 {
+        urls.reduce(0) { sum, url in
+            sum + Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        }
+    }
+
+    /// Moves inbox files older than `days` to the Trash, hanging or not: the
+    /// age the user picked wins over what is still on the line, the way
+    /// deleting a file in the Finder drops its card. The Trash stays the
+    /// safety net — nothing is erased permanently.
+    @discardableResult
+    static func clean(olderThan days: Int) -> Int {
+        guard days > 0 else { return 0 }
+        let cutoff = Date().addingTimeInterval(-TimeInterval(days) * 86400)
+        var trashed = 0
+        for url in files() {
+            // A file whose age cannot be read is left alone: when in doubt,
+            // do not trash.
+            let created = (try? url.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantFuture
+            guard created < cutoff else { continue }
+            if (try? FileManager.default.trashItem(at: url, resultingItemURL: nil)) != nil { trashed += 1 }
+        }
+        return trashed
+    }
+
+    /// Moves everything in the inbox folder to the Trash.
+    @discardableResult
+    static func empty() -> Int {
+        var trashed = 0
+        for url in files() {
+            if (try? FileManager.default.trashItem(at: url, resultingItemURL: nil)) != nil { trashed += 1 }
+        }
+        return trashed
     }
 }

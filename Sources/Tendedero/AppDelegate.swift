@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hotKey: HotKey?
     private var cancellables = Set<AnyCancellable>()
     private var mouseTimer: Timer?
+    private var cleanTimer: Timer?
 
     /// Whether the panel is ordered in. It can be in and still tucked away
     /// above the top edge, like an auto-hiding Dock.
@@ -54,6 +55,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if Inbox.isEnabled { Inbox.apply() }
         restoreSettingsOnTermination()
         startWatcher()
+
+        // Old inbox screenshots are recycled once a day, and once shortly
+        // after launch so a Mac that is often restarted still gets cleaned.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.autoClean() }
+        let cleaner = Timer(timeInterval: 86400, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.autoClean() }
+        }
+        RunLoop.main.add(cleaner, forMode: .common)
+        cleanTimer = cleaner
 
         hotKey = HotKey(keyCode: kVK_ANSI_T, modifiers: controlKey | optionKey) { [weak self] in
             self?.toggle()
@@ -141,6 +151,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Inbox.isEnabled = on
         if on { Inbox.apply() } else { Inbox.restore() }
         startWatcher()
+    }
+
+    // MARK: Reclaiming space
+
+    /// Recycles inbox screenshots older than seven days, while the toggle
+    /// is on. The Trash is the safety net: nothing is erased permanently.
+    private func autoClean() {
+        let days = Inbox.autoCleanDays
+        guard days > 0 else { return }
+        let trashed = Inbox.clean(olderThan: days)
+        if trashed > 0 {
+            log.notice("Auto-clean moved \(trashed, privacy: .public) old screenshot(s) to the Trash")
+            line.prune()
+        }
+    }
+
+    private func toggleAutoClean() {
+        Inbox.autoCleanDays = Inbox.autoCleanDays > 0 ? 0 : 7
+        autoClean()
+    }
+
+    private func emptyInbox() {
+        let trashed = Inbox.empty()
+        if trashed > 0 {
+            log.notice("Emptied the screenshots folder: \(trashed, privacy: .public) item(s) to the Trash")
+        }
+        line.prune()
     }
 
     /// Asked once. Changing system settings is the user's call, never ours.
@@ -486,6 +523,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             NSWorkspace.shared.open(self.watcher.folder)
         })
+
+        let inboxFiles = Inbox.files()
+        let inboxSize = ByteCountFormatter.string(fromByteCount: Inbox.size(of: inboxFiles), countStyle: .file)
+        let emptyItem = ClosureMenuItem(
+            L("Empty screenshots folder (\(inboxSize))", "Vaciar carpeta de capturas (\(inboxSize))")
+        ) { [weak self] in self?.emptyInbox() }
+        emptyItem.isEnabled = !inboxFiles.isEmpty
+        emptyItem.toolTip = L("Moves everything in it to the Trash",
+                              "Mueve todo su contenido a la Papelera")
+        menu.addItem(emptyItem)
+
+        let autoCleanItem = ClosureMenuItem(
+            L("Auto-clean after 7 days", "Limpiar automáticamente tras 7 días")
+        ) { [weak self] in self?.toggleAutoClean() }
+        autoCleanItem.state = Inbox.autoCleanDays > 0 ? .on : .off
+        autoCleanItem.toolTip = L("Moves screenshots in that folder to the Trash once they are 7 days old",
+                                  "Mueve a la Papelera las capturas de esa carpeta al cumplir 7 días")
+        menu.addItem(autoCleanItem)
 
         menu.addItem(.separator())
 

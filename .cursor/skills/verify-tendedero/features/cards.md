@@ -6,6 +6,8 @@ Each hung screenshot is a card on the line. Cards are the user's work surface: c
 
 - `copy` — single click copies the image to the clipboard
 - `annotate` — press-and-hold (or right-click → Annotate/标注) opens the in-place annotate editor
+- `share` — right-click → 分享… opens the system share sheet (AirDrop/Mail/…); 隔空投送 goes straight to AirDrop
+- `hang-in` — drag any image file onto a hanging card: it is copied into the inbox and a card appears
 - `drag-to-app` — drag onto another app's window shares the image
 - `drag-to-folder` — drag onto a Finder folder saves/moves the file there
 - `discard` — the × control trashes the file (inbox files only)
@@ -32,3 +34,5 @@ Preconditions: baseline green; ≥1 card hanging (see `line.md` → `hang`).
 - Annotation opens an in-place panel: dim backdrop, image centered, pill toolbar (马赛克 mosaic / 涂抹 smear / 画笔 pen / 文字 text / 撤销 undo / 取消 cancel / 完成 done). Fast — no system extension.
 - Mouse: drag with a tool to paint; text tool → click, type, Return. Esc cancels, Return/完成 saves back to the same file and the card thumbnail refreshes.
 - Cancel/取消 leaves the file byte-identical (check `ls -la` mtime). Done/完成 rewrites it atomic — same folder, same name.
+- Drop-to-hang: the line must be revealed/pinned first (menu → 显示晾衣绳) — cards only exist as drop targets while visible. `ls` the inbox folder for the new file + `defaults read app.tendedero.Tendedero pegged` for the new url; the source file stays untouched (copy, never move).
+- AirDrop on a VM opens the real 隔空投送 sheet but reports Wi-Fi/Bluetooth off — expected, not a bug.

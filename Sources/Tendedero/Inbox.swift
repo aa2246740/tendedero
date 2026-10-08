@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// Inbox mode: Tendedero takes over where screenshots go.
 ///
@@ -121,6 +121,42 @@ enum Inbox {
             if (try? FileManager.default.trashItem(at: url, resultingItemURL: nil)) != nil { trashed += 1 }
         }
         return trashed
+    }
+
+    /// Copies dropped files into the inbox, never moving them: what lands
+    /// on the line is a copy the app may trash, while the original stays
+    /// put. Files already inside the inbox hang as they are.
+    @discardableResult
+    static func copyIn(_ urls: [URL]) -> [URL] {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        var landed: [URL] = []
+        for src in urls {
+            if src.standardizedFileURL.path.hasPrefix(folder.standardizedFileURL.path + "/") {
+                landed.append(src)
+                continue
+            }
+            var dst = folder.appendingPathComponent(src.lastPathComponent)
+            var n = 2
+            while FileManager.default.fileExists(atPath: dst.path) {
+                let stem = src.deletingPathExtension().lastPathComponent
+                dst = folder.appendingPathComponent("\(stem)-\(n).\(src.pathExtension)")
+                n += 1
+            }
+            if (try? FileManager.default.copyItem(at: src, to: dst)) != nil { landed.append(dst) }
+        }
+        return landed
+    }
+
+    /// Image data dropped from a browser or app: saved as a PNG in the inbox.
+    @discardableResult
+    static func save(image data: Data) -> URL? {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        guard let rep = NSBitmapImageRep(data: data),
+              let png = rep.representation(using: NSBitmapImageRep.FileType.png, properties: [:]) else { return nil }
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let url = folder.appendingPathComponent("Dropped-\(stamp).png")
+        guard (try? png.write(to: url)) != nil else { return nil }
+        return url
     }
 
     /// Moves everything in the inbox folder to the Trash.

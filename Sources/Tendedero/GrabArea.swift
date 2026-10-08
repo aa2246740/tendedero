@@ -27,6 +27,7 @@ struct GrabArea: NSViewRepresentable {
     private func configure(_ view: GrabView) {
         let id = item.id
         let line = line
+        view.registerForDraggedTypes([.fileURL, .png, .tiff])
         view.url = item.url
         view.dragImage = item.thumb
         view.onClick = { line.copy(id) }
@@ -41,11 +42,20 @@ struct GrabArea: NSViewRepresentable {
         view.onDiscard = { line.discard(id) }
         view.onLongPress = { line.markup(id) }
         view.onPressChange = { pressed in line.pressedID = pressed ? id : nil }
+        view.onDropIn = { urls in for url in Inbox.copyIn(urls) { line.hang(url) } }
         view.menuProvider = {
             let menu = NSMenu()
             menu.addItem(ClosureMenuItem(L("Copy", ["es": "Copiar", "zh": "复制", "zh-Hant": "複製"])) { line.copy(id) })
             menu.addItem(ClosureMenuItem(L("Open", ["es": "Abrir", "zh": "打开", "zh-Hant": "打開"])) { line.open(id) })
             menu.addItem(ClosureMenuItem(L("Annotate", ["es": "Anotar", "zh": "标注", "zh-Hant": "標註"])) { line.markup(id) })
+            menu.addItem(ClosureMenuItem(L("Share…", ["es": "Compartir…", "zh": "分享…", "zh-Hant": "分享…"])) {
+                NSSharingServicePicker(items: [item.url]).show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
+            })
+            if let airdrop = NSSharingService(named: NSSharingService.Name("com.apple.share.AirDrop.send")) {
+                menu.addItem(ClosureMenuItem(L("AirDrop", ["es": "AirDrop", "zh": "隔空投送", "zh-Hant": "AirDrop"])) {
+                    airdrop.perform(withItems: [item.url])
+                })
+            }
             menu.addItem(ClosureMenuItem(L("Show in Finder", ["es": "Mostrar en Finder", "zh": "在 Finder 中显示", "zh-Hant": "在 Finder 中顯示"])) { line.reveal(id) })
             let inInbox = line.isInInbox(id)
             if inInbox {
@@ -76,6 +86,8 @@ final class GrabView: NSView, NSDraggingSource {
     var onDiscard: () -> Void = {}
     var onLongPress: () -> Void = {}
     var onPressChange: (Bool) -> Void = { _ in }
+    /// A file or image dropped on the photo joins the line.
+    var onDropIn: ([URL]) -> Void = { _ in }
     var menuProvider: () -> NSMenu = { NSMenu() }
 
     private var downPoint: NSPoint?
@@ -88,6 +100,32 @@ final class GrabView: NSView, NSDraggingSource {
     private static let holdDuration: TimeInterval = 0.45
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // MARK: NSDraggingDestination
+
+    private func droppedFileURLs(_ pb: NSPasteboard) -> [URL] {
+        (pb.readObjects(forClasses: [NSURL.self],
+                        options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let pb = sender.draggingPasteboard
+        let hasImage = pb.data(forType: .tiff) != nil || pb.data(forType: .png) != nil
+        return (!droppedFileURLs(pb).isEmpty || hasImage) ? .copy : []
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let pb = sender.draggingPasteboard
+        var urls = droppedFileURLs(pb)
+        // An image dragged straight off a page arrives as data, not a file.
+        if urls.isEmpty, let data = pb.data(forType: .tiff) ?? pb.data(forType: .png),
+           let saved = Inbox.save(image: data) {
+            urls = [saved]
+        }
+        guard !urls.isEmpty else { return false }
+        onDropIn(urls)
+        return true
+    }
 
     /// The discard cross drawn in the top left corner of the card. It is
     /// handled here because this view sits on top of the SwiftUI card.

@@ -32,9 +32,10 @@ Preconditions: baseline green; ≥1 card hanging (see `line.md` → `hang`).
 - × only exists while hovering the card — a click at its coordinate without the hover does nothing; take the hover screenshot FIRST.
 - Discard only trashes files living in the inbox folder; a card viewing a Desktop file has no × (by design — "files elsewhere stay the user's").
 - Copy puts the IMAGE on the pasteboard, not the file URL — `clipboard info` evidence beats guessing from Finder paste.
-- Annotation opens an in-place panel: dim backdrop, image centered, pill toolbar (马赛克 mosaic / 涂抹 smear / 画笔 pen / 文字 text / 撤销 undo / 取消 cancel / 完成 done). Fast — no system extension.
-- Mouse: drag with a tool to paint; text tool → click, type, Return. Esc cancels, Return/完成 saves back to the same file and the card thumbnail refreshes.
-- Cancel/取消 leaves the file byte-identical (check `ls -la` mtime). Done/完成 rewrites it atomic — same folder, same name.
+- Annotation opens an in-place panel on the screen under the pointer: solid dark backdrop, image at its real point size (DPI-aware) with a dark HUD toolbar directly under it — tools 矩形 rect / 箭头 arrow / 画笔 pen / 文字 text | 马赛克 mosaic / 模糊 blur (keys 1–6), three sizes ([ ]), six colors, 撤销/重做 undo/redo, ✕ discard, 完成 done. Tool, size and color persist (`annotateTool`/`annotateSize`/`annotateColor`). The line stays tucked away while the editor is open.
+- Mouse: drag with a tool to draw; ⇧ makes squares / 45° arrows. Text tool → click, type, Return (Esc drops just that text). ⌘Z/⇧⌘Z undo/redo.
+- Esc with no marks closes at once; with marks the first Esc shows "再按一次 Esc 放弃修改" and only a second Esc within 2 s discards. ✕ discards immediately.
+- Cancel, or Done with no marks, leaves the file byte-identical (check `ls -la` mtime). Done with marks rewrites it atomically through ImageIO with the original properties — same name, same DPI (144 for Retina shots) and color profile (`sips -g dpiWidth -g profile`).
 - Drop-to-hang: the line must be revealed/pinned first (menu → 显示晾衣绳) — cards only exist as drop targets while visible. `ls` the inbox folder for the new file + `defaults read app.tendedero.Tendedero pegged` for the new url; the source file stays untouched (copy, never move).
 - AirDrop on a VM opens the real 隔空投送 sheet but reports Wi-Fi/Bluetooth off — expected, not a bug.
 - The Services item needs pbs to rescan after install (`/System/Library/CoreServices/pbs -flush`) — on a real install it happens on its own; in Finder it shows at the context menu's bottom, not nested under 服务.

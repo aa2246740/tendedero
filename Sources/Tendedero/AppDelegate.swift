@@ -434,6 +434,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let inMenuBar = screenUnderPointer.map { Self.menuBarBand(of: $0).contains(mouse) } ?? false
         if !inMenuBar { menuBarSuppressed = false }
 
+        // The annotate editor covers the screen: the line stays tucked away
+        // underneath it, and pushing against the top edge does not bring it
+        // down over the image being marked up.
+        if Annotate.shared.isOpen {
+            hotZoneSince = nil
+            awaySince = nil
+            if isRevealed { setRevealed(false) }
+            return
+        }
+
         guard isRevealed else {
             // Resting against the top edge brings the line down on that
             // screen. It also works when another display sits above and

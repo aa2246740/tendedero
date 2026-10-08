@@ -103,9 +103,13 @@ final class Annotate: NSObject {
             b.font = .systemFont(ofSize: 13, weight: .medium)
             b.contentTintColor = NSColor(white: 0.15, alpha: 1)
             b.sizeToFit()
+            // sizeToFit hugs the drawn glyphs too tightly: label pixels
+            // spill past the frame's right edge, leaving dead clicks there
+            // and overlapping the next button's hit area.
+            b.frame.size.width += 16
             b.frame.origin = NSPoint(x: x, y: 10)
             bar.addSubview(b); toolButtons.append(b)
-            x += b.frame.width + 14
+            x += b.frame.width + 10
         }
         x += 6
         for (title, symbol, action) in [
@@ -125,9 +129,10 @@ final class Annotate: NSObject {
                 b.contentTintColor = .systemGreen
             }
             b.sizeToFit()
+            b.frame.size.width += 16
             b.frame.origin = NSPoint(x: x, y: 10)
             bar.addSubview(b)
-            x += b.frame.width + 14
+            x += b.frame.width + 10
         }
         bar.frame = NSRect(x: 0, y: 0, width: x + 2, height: 40)
         bar.wantsLayer = true

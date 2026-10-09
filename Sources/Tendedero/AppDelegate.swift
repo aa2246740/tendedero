@@ -307,7 +307,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             dismiss()
         }
         // The cursor is watched while there is a line, even tucked away,
-        // to notice it pushing against the top edge.
+        // to notice the pointer hovering over the status item.
         if wanted { startMouseTracking() } else { stopMouseTracking() }
     }
 
@@ -380,7 +380,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.ignoresMouseEvents = true
     }
 
-    /// How long the cursor rests against the top edge before the line comes
+    /// How long the cursor rests on the status item before the line comes
     /// down. Short enough to feel instant, long enough that a quick trip to
     /// the menu bar does not trigger it.
     private static let revealDelay: TimeInterval = 0.25
@@ -393,12 +393,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return NSRect(x: screen.frame.minX, y: screen.frame.maxY - h, width: screen.frame.width, height: h)
     }
 
-    /// The very top edge of a screen. Resting the pointer here reveals the
-    /// line — a deliberate push past the menu bar, so gliding over status
-    /// items on the way to an icon never pops the line down.
-    static func topEdgeBand(of screen: NSScreen) -> NSRect {
-        NSRect(x: screen.frame.minX, y: screen.frame.maxY - 3,
-               width: screen.frame.width, height: 3)
+    /// Convert the button's current bounds so moving the menu bar icon also
+    /// moves its hover target.
+    private func isOverStatusItem(_ point: NSPoint) -> Bool {
+        guard let button = statusItem?.button, let window = button.window,
+              window.isVisible, !button.isHidden else { return false }
+        let frame = window.convertToScreen(button.convert(button.bounds, to: nil))
+        return frame.contains(point)
     }
 
     /// A click anywhere in the top bar of any screen, a menu or an icon, puts the line away.
@@ -429,13 +430,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func tick() {
         let mouse = NSEvent.mouseLocation
         let now = Date()
+        let overStatusItem = isOverStatusItem(mouse)
 
         let screenUnderPointer = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
         let inMenuBar = screenUnderPointer.map { Self.menuBarBand(of: $0).contains(mouse) } ?? false
         if !inMenuBar { menuBarSuppressed = false }
 
         // The annotate editor covers the screen: the line stays tucked away
-        // underneath it, and pushing against the top edge does not bring it
+        // underneath it, and hovering over the status item does not bring it
         // down over the image being marked up.
         if Annotate.shared.isOpen {
             hotZoneSince = nil
@@ -445,11 +447,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         guard isRevealed else {
-            // Resting against the top edge brings the line down on that
-            // screen. It also works when another display sits above and
-            // the pointer never stops.
+            // The status item's current position is the only hover trigger.
             if let screen = screenUnderPointer,
-               Self.topEdgeBand(of: screen).contains(mouse), !menuBarSuppressed,
+               overStatusItem, !menuBarSuppressed,
                !FullScreen.isActive(on: screen) {
                 let since = hotZoneSince ?? now
                 hotZoneSince = since
@@ -471,11 +471,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateMousePassThrough(mouse)
 
         // The line's zone runs from its lowest point up to the bottom of the
-        // menu bar. Reaching into the menu bar counts as leaving, so the line
-        // tucks away and frees the status items when you go up to click one.
+        // menu bar. Our status item also keeps it open; other menu bar items
+        // count as leaving so their menus remain accessible.
         var zone = panel.frame
         if let screen = panel.screen { zone.size.height = screen.visibleFrame.maxY - zone.minY }
-        let inside = NSMouseInRect(mouse, zone, false)
+        let inside = NSMouseInRect(mouse, zone, false) || (overStatusItem && !menuBarSuppressed)
         if inside && pinned { pinned = false }
 
         let busy = pinned || GrabView.isDragging || line.pressedID != nil || now < peekUntil

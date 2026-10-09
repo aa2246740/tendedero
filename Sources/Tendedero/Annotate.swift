@@ -11,26 +11,30 @@ import ImageIO
 // One borderless key panel covers the screen under the pointer:
 //
 //   backdrop (solid, dark)
-//   ├─ CanvasView   the image at its real point size, or fitted to the screen
-//   │   ├─ stage    image · marks bitmap · live preview layers
-//   │   └─ text     an editable field while a text mark is being typed
-//   ├─ Toolbar      a dark HUD pill directly under the image
-//   └─ hint line    keyboard shortcuts, plus transient toasts above the bar
+//   ├─ Viewport         clips and zooms/pans the canvas (pinch, ⌘±, scroll)
+//   │   └─ CanvasView   the image, fitted to the screen at first
+//   │       ├─ image    the untouched screenshot on a layer
+//   │       ├─ overlay  every mark, the one being drawn, selection handles
+//   │       └─ editor   a text view while a text mark is being typed
+//   ├─ Toolbar          a dark HUD pill directly under the image
+//   └─ hint line        shortcuts for what you are doing right now
 //
-// Coordinates never flip: the view, its layers and every bitmap use a
-// bottom-left origin. While you drag, a mark is a vector shape on a
-// CAShapeLayer (GPU-composited, no per-move bitmap copies). On mouse-up it is
-// rasterized once into the marks bitmap at the file's own resolution.
+// Marks stay objects until the file is saved: a list of value-type marks in
+// image pixels (bottom-left origin, never flipped), redrawn as vectors on
+// every change. That is what lets a mark be selected again, moved, resized,
+// recolored or, for text, edited, and what keeps zooming sharp. Undo and redo
+// are snapshots of that list, which costs bytes, not bitmaps.
+//
+// Sizes are picked in on-screen points at the zoom the editor opens with and
+// stored in pixels, so a mark keeps its size in the file whatever the zoom.
 //
 // Mosaic and blur are a stroked mask over a copy of the whole image that is
 // pixellated or blurred once, so the mosaic grid stays aligned across strokes
-// and the brush is round, not a trail of square stamps.
+// and moving a mosaic reveals the right pixels underneath.
 //
-// Undo and redo keep only the pixels of the dirty rectangle, before and
-// after each mark, never a snapshot of the whole bitmap.
-//
-// Saving goes through ImageIO with the original file's properties, so the
-// DPI (Retina screenshots are 144) and the color profile survive the edit.
+// Saving composites the marks at the file's own resolution and goes through
+// ImageIO with the original file's properties, so the DPI (Retina
+// screenshots are 144) and the color profile survive the edit.
 
 @MainActor
 final class Annotate: NSObject {
@@ -45,28 +49,38 @@ final class Annotate: NSObject {
     /// Raw values are what gets remembered between edits; the number keys
     /// follow the toolbar order instead.
     enum Tool: String, CaseIterable {
-        case rect, ellipse, arrow, pen, text, mosaic, blur
+        case select, rect, ellipse, arrow, pen, text, textBox, mosaic, blur
 
-        var usesColor: Bool { self != .mosaic && self != .blur }
-
+        var kind: CanvasView.Mark.Kind? { CanvasView.Mark.Kind(rawValue: rawValue) }
+        var usesColor: Bool { kind?.usesColor ?? false }
+        var isText: Bool { kind?.isText ?? false }
+        var isBrush: Bool { kind?.isBrush ?? false }
+        var isFreehand: Bool { kind?.isFreehand ?? false }
         /// Dragged out from corner to corner; Shift squares or snaps them.
         var isShape: Bool { self == .rect || self == .ellipse || self == .arrow }
 
-        var key: Int { Self.allCases.firstIndex(of: self)! + 1 }
+        /// V for the pointer, 1–8 for the drawing tools.
+        var shortcut: String { self == .select ? "V" : String(Self.allCases.firstIndex(of: self)!) }
 
-        init?(key: Int) {
-            guard Self.allCases.indices.contains(key - 1) else { return nil }
-            self = Self.allCases[key - 1]
+        init?(shortcut: String) {
+            if shortcut.lowercased() == "v" {
+                self = .select
+                return
+            }
+            guard let n = Int(shortcut), n >= 1, n < Self.allCases.count else { return nil }
+            self = Self.allCases[n]
         }
 
         var icon: NSImage? {
             let symbol: String
             switch self {
+            case .select: symbol = "cursorarrow"
             case .rect: symbol = "rectangle"
             case .ellipse: symbol = "circle"
             case .arrow: symbol = "arrow.up.right"
             case .pen: symbol = "scribble"
-            case .text: return Self.letterIcon("T")
+            case .text: return Self.letterIcon(boxed: false)
+            case .textBox: return Self.letterIcon(boxed: true)
             case .mosaic: symbol = "checkerboard.rectangle"
             case .blur: symbol = "drop.halffull"
             }
@@ -76,14 +90,22 @@ final class Annotate: NSObject {
 
         /// SF Symbols has no plain "T"; "textformat" reads as "Aa", which
         /// nobody takes for "add text".
-        private static func letterIcon(_ letter: String) -> NSImage {
-            let text = NSAttributedString(string: letter, attributes: [
-                .font: NSFont.systemFont(ofSize: 17, weight: .medium),
+        private static func letterIcon(boxed: Bool) -> NSImage {
+            let text = NSAttributedString(string: "T", attributes: [
+                .font: NSFont.systemFont(ofSize: boxed ? 11 : 17, weight: boxed ? .bold : .medium),
                 .foregroundColor: NSColor.black,
             ])
-            let size = text.size()
-            let image = NSImage(size: NSSize(width: ceil(size.width), height: ceil(size.height)), flipped: false) { _ in
-                text.draw(at: .zero)
+            let glyph = text.size()
+            let size = boxed ? NSSize(width: 20, height: 17) : NSSize(width: ceil(glyph.width), height: ceil(glyph.height))
+            let image = NSImage(size: size, flipped: false) { r in
+                if boxed {
+                    let box = NSBezierPath(roundedRect: r.insetBy(dx: 1, dy: 1), xRadius: 4, yRadius: 4)
+                    box.lineWidth = 1.5
+                    NSColor.black.setStroke()
+                    box.stroke()
+                }
+                text.draw(at: NSPoint(x: ((r.width - glyph.width) / 2).rounded(),
+                                      y: ((r.height - glyph.height) / 2).rounded()))
                 return true
             }
             image.isTemplate = true
@@ -92,11 +114,13 @@ final class Annotate: NSObject {
 
         var title: String {
             switch self {
+            case .select: return L("Select and move", ["es": "Seleccionar y mover", "zh": "选择/移动", "zh-Hant": "選取/移動"])
             case .rect: return L("Rectangle", ["es": "Rectángulo", "zh": "矩形", "zh-Hant": "矩形"])
             case .ellipse: return L("Ellipse", ["es": "Elipse", "zh": "圆形", "zh-Hant": "圓形"])
             case .arrow: return L("Arrow", ["es": "Flecha", "zh": "箭头", "zh-Hant": "箭頭"])
             case .pen: return L("Pen", ["es": "Lápiz", "zh": "画笔", "zh-Hant": "畫筆"])
             case .text: return L("Text", ["es": "Texto", "zh": "文字", "zh-Hant": "文字"])
+            case .textBox: return L("Text box", ["es": "Cuadro de texto", "zh": "文本框", "zh-Hant": "文字框"])
             case .mosaic: return L("Mosaic", ["es": "Mosaico", "zh": "马赛克", "zh-Hant": "馬賽克"])
             case .blur: return L("Blur", ["es": "Difuminar", "zh": "模糊", "zh-Hant": "模糊"])
             }
@@ -113,12 +137,6 @@ final class Annotate: NSObject {
         (NSColor.black, L("Black", ["es": "Negro", "zh": "黑色", "zh-Hant": "黑色"])),
     ]
 
-    static let sizeNames = [
-        L("Thin", ["es": "Fino", "zh": "细", "zh-Hant": "細"]),
-        L("Medium", ["es": "Medio", "zh": "中", "zh-Hant": "中"]),
-        L("Thick", ["es": "Grueso", "zh": "粗", "zh-Hant": "粗"]),
-    ]
-
     /// The original file and what is needed to write it back the same way.
     private struct Source {
         let url: URL
@@ -129,31 +147,40 @@ final class Annotate: NSObject {
     private let ci = CIContext()
     private var panel: NSPanel?
     private var canvas: CanvasView?
+    private var viewport: Viewport?
     private var source: Source?
     private var toolButtons: [Tool: HUDButton] = [:]
-    private var sizeButtons: [DotButton] = []
+    private var sizeButtons: [SizeButton] = []
     private var colorButtons: [DotButton] = []
     private var undoButton: HUDButton?
     private var redoButton: HUDButton?
+    private var hint: NSTextField?
+    private var hintCenterX: CGFloat = 0
     private var toast: NSView?
     private var toastAnchor: NSPoint = .zero
     /// Escape with unsaved marks only arms the discard; a second one inside
     /// this window confirms it.
     private var escapeArmedUntil = Date.distantPast
 
-    // The last tool, size and color are remembered between edits.
+    // The last tool, sizes and color are remembered between edits.
     private var tool: Tool {
         get { UserDefaults.standard.string(forKey: "annotateTool").flatMap(Tool.init(rawValue:)) ?? .rect }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "annotateTool") }
     }
-    private var sizeIndex: Int {
-        get { UserDefaults.standard.object(forKey: "annotateSize") as? Int ?? 1 }
-        set { UserDefaults.standard.set(max(0, min(2, newValue)), forKey: "annotateSize") }
+    private var lineSize: Int {
+        get { Self.clampSize(UserDefaults.standard.object(forKey: "annotateLineSize") as? Int ?? 1) }
+        set { UserDefaults.standard.set(Self.clampSize(newValue), forKey: "annotateLineSize") }
+    }
+    private var textSize: Int {
+        get { Self.clampSize(UserDefaults.standard.object(forKey: "annotateTextSize") as? Int ?? 1) }
+        set { UserDefaults.standard.set(Self.clampSize(newValue), forKey: "annotateTextSize") }
     }
     private var colorIndex: Int {
         get { min(Self.palette.count - 1, max(0, UserDefaults.standard.integer(forKey: "annotateColor"))) }
         set { UserDefaults.standard.set(newValue, forKey: "annotateColor") }
     }
+
+    private static func clampSize(_ i: Int) -> Int { max(0, min(CanvasView.sizeCount - 1, i)) }
 
     // MARK: Opening
 
@@ -190,17 +217,25 @@ final class Annotate: NSObject {
         let size = NSSize(width: max(1, (natural.width * fit).rounded()),
                           height: max(1, (natural.height * fit).rounded()))
 
-        // Image, toolbar and hint form one group, centered in the area.
+        // Image, toolbar and hint form one group, centered in the area. The
+        // viewport reaches from just above the toolbar to the top of the
+        // visible frame, so a zoomed-in image has room to grow.
         let groupHeight = size.height + gap + barSize.height + hintHeight
         let bottom = (area.midY - groupHeight / 2).rounded()
-        let imageOrigin = NSPoint(x: (area.midX - size.width / 2).rounded(),
-                                  y: bottom + hintHeight + barSize.height + gap)
+        let barY = bottom + hintHeight
+        let viewportY = barY + barSize.height + 4
+        let viewportFrame = NSRect(x: visible.minX, y: viewportY, width: visible.width, height: visible.maxY - viewportY)
+        let fitFrame = NSRect(x: (area.midX - size.width / 2).rounded() - visible.minX, y: gap - 4,
+                              width: size.width, height: size.height)
 
-        let cv = CanvasView(frame: NSRect(origin: imageOrigin, size: size))
+        let cv = CanvasView(frame: fitFrame)
         cv.configure(base: cg, ci: ci)
         cv.onKey = { [weak self] event in self?.handleKey(event) ?? false }
-        cv.onChange = { [weak self] in self?.refreshHistory() }
+        cv.onChange = { [weak self] in self?.refresh() }
         canvas = cv
+        let vp = Viewport(frame: viewportFrame, canvas: cv, fitFrame: fitFrame, naturalWidth: natural.width)
+        vp.onZoom = { [weak self] percent in self?.showToast("\(percent)%") }
+        viewport = vp
 
         let panel = KeyPanel(contentRect: screen.frame, styleMask: [.borderless],
                              backing: .buffered, defer: false)
@@ -216,29 +251,24 @@ final class Annotate: NSObject {
         let root = NSView(frame: local)
         panel.contentView = root
 
-        root.addSubview(cv)
+        root.addSubview(vp)
         bar.frame.origin = NSPoint(x: clamp((area.midX - barSize.width / 2).rounded(),
                                             visible.minX + 8, visible.maxX - barSize.width - 8),
-                                   y: bottom + hintHeight)
+                                   y: barY)
         root.addSubview(bar)
 
-        let hint = NSTextField(labelWithString: L(
-            "⏎ Done   ·   Esc Cancel   ·   ⌘Z Undo   ·   1–7 Tools   ·   [ ] Size   ·   ⇧ Straight / square / circle",
-            ["es": "⏎ Listo   ·   Esc Cancelar   ·   ⌘Z Deshacer   ·   1–7 Herramientas   ·   [ ] Tamaño   ·   ⇧ Recto / cuadrado / círculo",
-             "zh": "⏎ 完成   ·   Esc 取消   ·   ⌘Z 撤销   ·   1–7 切换工具   ·   [ ] 粗细   ·   ⇧ 水平/正方形/正圆",
-             "zh-Hant": "⏎ 完成   ·   Esc 取消   ·   ⌘Z 撤銷   ·   1–7 切換工具   ·   [ ] 粗細   ·   ⇧ 水平/正方形/正圓"]))
+        let hint = NSTextField(labelWithString: "")
         hint.font = .systemFont(ofSize: 11)
         hint.textColor = NSColor(white: 1, alpha: 0.38)
-        hint.sizeToFit()
-        hint.frame.origin = NSPoint(x: (area.midX - hint.frame.width / 2).rounded(), y: bottom)
+        hint.frame.origin.y = bottom
         root.addSubview(hint)
+        self.hint = hint
+        hintCenterX = area.midX
         // Toasts float just inside the bottom edge of the image.
-        toastAnchor = NSPoint(x: area.midX, y: imageOrigin.y + 16)
+        toastAnchor = NSPoint(x: area.midX, y: viewportY + fitFrame.minY + 16)
 
         self.panel = panel
         select(tool)
-        refreshStyle()
-        refreshHistory()
 
         panel.alphaValue = 0
         NSApp.activate(ignoringOtherApps: true)
@@ -267,10 +297,10 @@ final class Annotate: NSObject {
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         toolButtons = [:]
-        for t in Tool.allCases {
-            if t == .mosaic { stack.addArrangedSubview(Self.divider()) }
-            let b = HUDButton(image: t.icon, fallback: t.title, tip: "\(t.title)   \(t.key)")
-            b.tag = t.key
+        for (i, t) in Tool.allCases.enumerated() {
+            if t == .rect || t == .mosaic { stack.addArrangedSubview(Self.divider()) }
+            let b = HUDButton(image: t.icon, fallback: t.title, tip: "\(t.title)   \(t.shortcut)")
+            b.tag = i
             b.target = self
             b.action = #selector(pickTool(_:))
             toolButtons[t] = b
@@ -279,8 +309,8 @@ final class Annotate: NSObject {
 
         stack.addArrangedSubview(Self.divider())
         sizeButtons = []
-        for (i, d) in [CGFloat(4), 7, 10].enumerated() {
-            let b = DotButton(color: .white, diameter: d, tip: Self.sizeNames[i] + (i == 0 ? "   [" : i == 2 ? "   ]" : ""), width: 24)
+        for i in 0..<CanvasView.sizeCount {
+            let b = SizeButton(level: i)
             b.tag = i
             b.target = self
             b.action = #selector(pickSize(_:))
@@ -375,20 +405,42 @@ final class Annotate: NSObject {
     // MARK: Actions
 
     @objc private func pickTool(_ sender: NSButton) {
-        if let t = Tool(key: sender.tag) { select(t) }
+        select(Tool.allCases[sender.tag])
     }
 
-    @objc private func pickSize(_ sender: NSButton) {
-        sizeIndex = sender.tag
-        refreshStyle()
+    /// What the size and color controls act on: the mark being typed or
+    /// the selected one, else the defaults for the current tool.
+    private var styleTarget: (isText: Bool, isBrush: Bool, usesColor: Bool) {
+        if let m = canvas?.focus { return (m.kind.isText, m.kind.isBrush, m.kind.usesColor) }
+        return (tool.isText, tool.isBrush, tool.usesColor)
+    }
+
+    @objc private func pickSize(_ sender: NSButton) { setSize(sender.tag) }
+
+    private func setSize(_ i: Int) {
+        let i = Self.clampSize(i)
+        if styleTarget.isText { textSize = i } else { lineSize = i }
+        canvas?.style = currentStyle
+        canvas?.applySize(i)
+        refresh()
+    }
+
+    private var displayedSize: Int? {
+        if let m = canvas?.focus { return canvas?.sizeIndex(of: m) }
+        return tool.isText ? textSize : lineSize
     }
 
     @objc private func pickColor(_ sender: NSButton) {
         colorIndex = sender.tag
-        // Picking a color while on mosaic or blur means you want to draw:
-        // back to the last tool that uses ink.
-        if !tool.usesColor { select(lastInkTool) }
-        refreshStyle()
+        canvas?.style = currentStyle
+        if canvas?.focus != nil {
+            canvas?.applyColor(Self.palette[sender.tag].0)
+        } else if !tool.usesColor {
+            // Picking a color while on mosaic, blur or the pointer means
+            // you want to draw: back to the last tool that uses ink.
+            select(lastInkTool)
+        }
+        refresh()
     }
 
     private var lastInkTool: Tool = .rect
@@ -396,21 +448,66 @@ final class Annotate: NSObject {
     private func select(_ t: Tool) {
         tool = t
         if t.usesColor { lastInkTool = t }
+        canvas?.style = currentStyle
         canvas?.tool = t
         for (k, b) in toolButtons { b.isOn = k == t }
-        // Mosaic and blur have no color: the swatches step back.
-        for b in colorButtons { b.isDimmed = !t.usesColor }
+        refresh()
     }
 
-    private func refreshStyle() {
-        for (i, b) in sizeButtons.enumerated() { b.isOn = i == sizeIndex }
-        for (i, b) in colorButtons.enumerated() { b.isOn = i == colorIndex }
-        canvas?.style = CanvasView.Style(color: Self.palette[colorIndex].0, size: sizeIndex)
+    private var currentStyle: CanvasView.Style {
+        CanvasView.Style(color: Self.palette[colorIndex].0, lineSize: lineSize, textSize: textSize)
     }
 
-    private func refreshHistory() {
-        undoButton?.isEnabled = canvas?.canUndo ?? false
-        redoButton?.isEnabled = canvas?.canRedo ?? false
+    /// Brings the toolbar, the history buttons and the hint in line with
+    /// the canvas after anything changed.
+    private func refresh() {
+        guard let canvas else { return }
+        let target = styleTarget
+        let size = displayedSize
+        let last = CanvasView.sizeCount - 1
+        for (i, b) in sizeButtons.enumerated() {
+            b.mode = target.isText ? .letter : .dot
+            b.isOn = i == size
+            let points = Int(target.isText ? CanvasView.fontPoints[i]
+                             : target.isBrush ? CanvasView.brushPoints[i] : CanvasView.linePoints[i])
+            b.toolTip = (target.isText
+                ? L("Text size", ["es": "Tamaño del texto", "zh": "文字大小", "zh-Hant": "文字大小"])
+                : L("Line width", ["es": "Grosor", "zh": "线条粗细", "zh-Hant": "線條粗細"]))
+                + " \(points) pt" + (i == 0 ? "   [" : i == last ? "   ]" : "")
+        }
+        let shownColor = canvas.focus.flatMap { m in Self.palette.firstIndex { $0.0 == m.color } } ?? colorIndex
+        for (i, b) in colorButtons.enumerated() {
+            b.isDimmed = !target.usesColor
+            b.isOn = i == shownColor
+        }
+        undoButton?.isEnabled = canvas.canUndo
+        redoButton?.isEnabled = canvas.canRedo
+        refreshHint()
+    }
+
+    private func refreshHint() {
+        guard let hint, let canvas else { return }
+        let text: String
+        if canvas.isEditingText {
+            text = L("Esc or click outside  Finish   ·   ⏎ New line   ·   ⌘Z Undo typing   ·   Size and color apply as you type",
+                     ["es": "Esc o clic fuera  Terminar   ·   ⏎ Nueva línea   ·   ⌘Z Deshacer   ·   Tamaño y color se aplican al escribir",
+                      "zh": "Esc 或点击空白处  完成输入   ·   ⏎ 换行   ·   ⌘Z 撤销输入   ·   字号和颜色可边打边改",
+                      "zh-Hant": "Esc 或點擊空白處  完成輸入   ·   ⏎ 換行   ·   ⌘Z 撤銷輸入   ·   字號和顏色可邊打邊改"])
+        } else if canvas.focus != nil {
+            text = L("Drag to move   ·   Drag the handles to resize   ·   ⌫ Delete   ·   ←↑↓→ Nudge   ·   ⌘D Duplicate   ·   Double-click text to edit",
+                     ["es": "Arrastra para mover   ·   Tiradores para cambiar el tamaño   ·   ⌫ Borrar   ·   ←↑↓→ Mover   ·   ⌘D Duplicar   ·   Doble clic para editar el texto",
+                      "zh": "拖动移动   ·   拖动手柄缩放   ·   ⌫ 删除   ·   ←↑↓→ 微调   ·   ⌘D 复制   ·   双击文字可修改",
+                      "zh-Hant": "拖動移動   ·   拖動控點縮放   ·   ⌫ 刪除   ·   ←↑↓→ 微調   ·   ⌘D 複製   ·   雙擊文字可修改"])
+        } else {
+            text = L("⏎ Done   ·   Esc Cancel   ·   ⌘Z Undo   ·   V Select   ·   1–8 Tools   ·   [ ] Size   ·   ⇧ Straight / square / circle   ·   Pinch or ⌘± Zoom   ·   Space-drag Pan",
+                     ["es": "⏎ Listo   ·   Esc Cancelar   ·   ⌘Z Deshacer   ·   V Seleccionar   ·   1–8 Herramientas   ·   [ ] Tamaño   ·   ⇧ Recto / cuadrado / círculo   ·   Pellizca o ⌘± Zoom   ·   Espacio + arrastrar Mover",
+                      "zh": "⏎ 完成   ·   Esc 取消   ·   ⌘Z 撤销   ·   V 选择   ·   1–8 切换工具   ·   [ ] 粗细/字号   ·   ⇧ 水平/正方形/正圆   ·   双指捏合或 ⌘± 缩放   ·   空格+拖动 平移",
+                      "zh-Hant": "⏎ 完成   ·   Esc 取消   ·   ⌘Z 撤銷   ·   V 選取   ·   1–8 切換工具   ·   [ ] 粗細/字號   ·   ⇧ 水平/正方形/正圓   ·   雙指捏合或 ⌘± 縮放   ·   空白鍵+拖動 平移"])
+        }
+        guard hint.stringValue != text else { return }
+        hint.stringValue = text
+        hint.sizeToFit()
+        hint.frame.origin.x = (hintCenterX - hint.frame.width / 2).rounded()
     }
 
     @objc private func undo(_ sender: Any? = nil) { canvas?.undo() }
@@ -421,9 +518,11 @@ final class Annotate: NSObject {
 
     @objc private func commit(_ sender: Any? = nil) { close(committing: true) }
 
-    /// Escape never throws work away by surprise: with marks on the image,
-    /// the first press only asks for a second.
+    /// Escape never throws work away by surprise: it lets go of a selection
+    /// first, and with marks on the image the next press only asks for a
+    /// second.
     private func escape() {
+        if canvas?.deselect() == true { return }
         guard canvas?.isDirty == true, Date() >= escapeArmedUntil else {
             cancel()
             return
@@ -439,21 +538,32 @@ final class Annotate: NSObject {
     func handleKey(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let chars = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        let step: CGFloat = flags.contains(.shift) ? 10 : 1
         switch event.keyCode {
-        case 53: escape(); return true          // Esc
-        case 36, 76: commit(); return true      // Return, Enter
+        case 53: escape(); return true                       // Esc
+        case 36, 76: commit(); return true                   // Return, Enter
+        case 51, 117: return canvas?.deleteSelection() ?? false
+        case 123: return canvas?.nudge(dx: -step, dy: 0) ?? false
+        case 124: return canvas?.nudge(dx: step, dy: 0) ?? false
+        case 125: return canvas?.nudge(dx: 0, dy: -step) ?? false
+        case 126: return canvas?.nudge(dx: 0, dy: step) ?? false
         default: break
         }
         if flags.contains(.command) {
             switch chars {
             case "z": flags.contains(.shift) ? redo() : undo(); return true
             case "s": commit(); return true
+            case "d": return canvas?.duplicateSelection() ?? false
+            case "=", "+": viewport?.zoomStep(in: true); return true
+            case "-": viewport?.zoomStep(in: false); return true
+            case "0": viewport?.fit(); return true
+            case "1": viewport?.actualSize(); return true
             default: return false
             }
         }
-        if let n = Int(chars), let t = Tool(key: n) { select(t); return true }
-        if chars == "[" { sizeIndex -= 1; refreshStyle(); return true }
-        if chars == "]" { sizeIndex += 1; refreshStyle(); return true }
+        if let t = Tool(shortcut: chars) { select(t); return true }
+        if chars == "[" { setSize((displayedSize ?? 1) - 1); return true }
+        if chars == "]" { setSize((displayedSize ?? 1) + 1); return true }
         return false
     }
 
@@ -490,7 +600,7 @@ final class Annotate: NSObject {
     // MARK: Closing and saving
 
     private func close(committing: Bool, animated: Bool = true) {
-        canvas?.finishText()
+        canvas?.finishEditing()
         // Nothing drawn means nothing to write: the file is left untouched.
         if committing, let source, let canvas, canvas.isDirty, let baked = canvas.bake() {
             write(baked, to: source)
@@ -498,8 +608,10 @@ final class Annotate: NSObject {
         guard let panel else { return }
         self.panel = nil
         canvas = nil
+        viewport = nil
         source = nil
         toast = nil
+        hint = nil
         toolButtons = [:]
         sizeButtons = []
         colorButtons = []
@@ -552,12 +664,49 @@ private final class KeyPanel: NSPanel {
 
 // MARK: - Toolbar controls
 
+/// The hover highlight every toolbar control shares.
+private class HoverButton: NSButton {
+    var hovering = false { didSet { hoverChanged() } }
+    private var tracking: NSTrackingArea?
+
+    func hoverChanged() { needsDisplay = true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseExited(with event: NSEvent) { hovering = false }
+
+    func setUp(width: CGFloat, tip: String?) {
+        title = ""
+        isBordered = false
+        setButtonType(.momentaryPushIn)
+        focusRingType = .none
+        refusesFirstResponder = true
+        if let tip {
+            toolTip = tip
+            setAccessibilityLabel(tip)
+        }
+        translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: width),
+            heightAnchor.constraint(equalToConstant: 32),
+        ])
+    }
+
+    override var isFlipped: Bool { false }
+}
+
 /// An icon button for the dark HUD: a soft highlight on hover, a solid one
 /// when it is the current tool.
-private final class HUDButton: NSButton {
+private final class HUDButton: HoverButton {
     var isOn = false { didSet { refresh() } }
-    private var hovering = false { didSet { refresh() } }
-    private var tracking: NSTrackingArea?
 
     override var isEnabled: Bool { didSet { refresh() } }
 
@@ -568,44 +717,23 @@ private final class HUDButton: NSButton {
 
     init(image: NSImage?, fallback: String, tip: String) {
         super.init(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+        setUp(width: 32, tip: tip)
         if let image {
             self.image = image
-            title = ""
             imagePosition = .imageOnly
         } else {
             title = fallback
         }
         imageScaling = .scaleNone
-        isBordered = false
-        setButtonType(.momentaryPushIn)
-        focusRingType = .none
-        refusesFirstResponder = true
-        toolTip = tip
-        setAccessibilityLabel(tip)
         wantsLayer = true
         layer?.cornerRadius = 7
         layer?.cornerCurve = .continuous
-        translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: 32),
-            heightAnchor.constraint(equalToConstant: 32),
-        ])
         refresh()
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let tracking { removeTrackingArea(tracking) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                                  owner: self, userInfo: nil)
-        addTrackingArea(area)
-        tracking = area
-    }
-
-    override func mouseEntered(with event: NSEvent) { hovering = true }
-    override func mouseExited(with event: NSEvent) { hovering = false }
+    override func hoverChanged() { refresh() }
 
     private func refresh() {
         let fill: NSColor = isOn ? NSColor(white: 1, alpha: 0.20)
@@ -615,63 +743,76 @@ private final class HUDButton: NSButton {
     }
 }
 
-/// A round swatch: a color, or a white dot whose size is the stroke size.
-/// The current one wears a ring.
-private final class DotButton: NSButton {
+/// One step of the size scale: a dot as thick as the line for strokes, a
+/// letter as big as the type for text.
+private final class SizeButton: HoverButton {
+    enum Mode { case dot, letter }
+
+    private static let dots: [CGFloat] = [3, 5, 7, 10, 13]
+    private static let letters: [CGFloat] = [9, 11, 13, 16, 19]
+
+    let level: Int
+    var mode = Mode.dot { didSet { if mode != oldValue { needsDisplay = true } } }
+    var isOn = false { didSet { needsDisplay = true } }
+
+    init(level: Int) {
+        self.level = level
+        super.init(frame: NSRect(x: 0, y: 0, width: 26, height: 32))
+        setUp(width: 26, tip: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let plate = NSRect(x: 1, y: 3, width: bounds.width - 2, height: bounds.height - 6)
+        if isOn || hovering {
+            NSColor(white: 1, alpha: isOn ? 0.20 : 0.08).setFill()
+            NSBezierPath(roundedRect: plate, xRadius: 6, yRadius: 6).fill()
+        }
+        let ink = NSColor(white: 1, alpha: isOn ? 1 : 0.72)
+        switch mode {
+        case .dot:
+            let d = Self.dots[level]
+            ink.setFill()
+            NSBezierPath(ovalIn: NSRect(x: bounds.midX - d / 2, y: bounds.midY - d / 2, width: d, height: d)).fill()
+        case .letter:
+            let font = NSFont.systemFont(ofSize: Self.letters[level], weight: .semibold)
+            let a = NSAttributedString(string: "A", attributes: [.font: font, .foregroundColor: ink])
+            let baseline = (bounds.midY - font.capHeight / 2).rounded()
+            a.draw(at: NSPoint(x: (bounds.midX - a.size().width / 2).rounded(), y: baseline + font.descender))
+        }
+    }
+}
+
+/// A round color swatch. The current one wears a ring.
+private final class DotButton: HoverButton {
     let dotColor: NSColor
     let diameter: CGFloat
     var isOn = false { didSet { needsDisplay = true } }
     var isDimmed = false { didSet { needsDisplay = true } }
-    private var hovering = false { didSet { needsDisplay = true } }
-    private var tracking: NSTrackingArea?
 
     init(color: NSColor, diameter: CGFloat, tip: String, width: CGFloat) {
         dotColor = color
         self.diameter = diameter
         super.init(frame: NSRect(x: 0, y: 0, width: width, height: 32))
-        title = ""
-        isBordered = false
-        setButtonType(.momentaryPushIn)
-        focusRingType = .none
-        refusesFirstResponder = true
-        toolTip = tip
-        setAccessibilityLabel(tip)
-        translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: width),
-            heightAnchor.constraint(equalToConstant: 32),
-        ])
+        setUp(width: width, tip: tip)
     }
 
     required init?(coder: NSCoder) { fatalError() }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let tracking { removeTrackingArea(tracking) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                                  owner: self, userInfo: nil)
-        addTrackingArea(area)
-        tracking = area
-    }
-
-    override func mouseEntered(with event: NSEvent) { hovering = true }
-    override func mouseExited(with event: NSEvent) { hovering = false }
 
     override func draw(_ dirtyRect: NSRect) {
         let alpha: CGFloat = isDimmed ? 0.3 : 1
         let c = NSPoint(x: bounds.midX, y: bounds.midY)
         let r = diameter / 2
+        let around = NSRect(x: c.x - r - 4, y: c.y - r - 4, width: diameter + 8, height: diameter + 8)
         if isOn && !isDimmed {
-            let ring = NSBezierPath(ovalIn: NSRect(x: c.x - r - 4, y: c.y - r - 4,
-                                                   width: diameter + 8, height: diameter + 8))
+            let ring = NSBezierPath(ovalIn: around)
             ring.lineWidth = 1.5
             NSColor(white: 1, alpha: 0.9).setStroke()
             ring.stroke()
         } else if hovering && !isDimmed {
-            let halo = NSBezierPath(ovalIn: NSRect(x: c.x - r - 4, y: c.y - r - 4,
-                                                   width: diameter + 8, height: diameter + 8))
             NSColor(white: 1, alpha: 0.08).setFill()
-            halo.fill()
+            NSBezierPath(ovalIn: around).fill()
         }
         let dot = NSBezierPath(ovalIn: NSRect(x: c.x - r, y: c.y - r, width: diameter, height: diameter))
         dotColor.withAlphaComponent(alpha).setFill()
@@ -686,13 +827,11 @@ private final class DotButton: NSButton {
 /// The one prominent button: an accent-filled "✓ Done". It draws itself,
 /// because NSButton's own image-and-title layout pushes the checkmark and
 /// the label to opposite ends once the button is wider than its content.
-private final class DoneButton: NSButton {
-    private let label: NSAttributedString
+private final class DoneButton: HoverButton {
     private static let labelFont = NSFont.systemFont(ofSize: 13, weight: .semibold)
+    private let label: NSAttributedString
     private let check: NSImage?
     private let gap: CGFloat = 5
-    private var hovering = false { didSet { needsDisplay = true } }
-    private var tracking: NSTrackingArea?
 
     init(title: String, tip: String) {
         label = NSAttributedString(string: title, attributes: [.font: Self.labelFont, .foregroundColor: NSColor.white])
@@ -707,36 +846,12 @@ private final class DoneButton: NSButton {
                 }
             }
         super.init(frame: .zero)
-        self.title = ""
-        isBordered = false
-        setButtonType(.momentaryPushIn)
-        focusRingType = .none
-        refusesFirstResponder = true
-        toolTip = tip
-        setAccessibilityLabel(title)
-        translatesAutoresizingMaskIntoConstraints = false
         let content = (check.map { $0.size.width + gap } ?? 0) + label.size().width
-        NSLayoutConstraint.activate([
-            widthAnchor.constraint(equalToConstant: ceil(content) + 28),
-            heightAnchor.constraint(equalToConstant: 32),
-        ])
+        setUp(width: ceil(content) + 28, tip: tip)
+        setAccessibilityLabel(title)
     }
 
     required init?(coder: NSCoder) { fatalError() }
-
-    override var isFlipped: Bool { false }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let tracking { removeTrackingArea(tracking) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                                  owner: self, userInfo: nil)
-        addTrackingArea(area)
-        tracking = area
-    }
-
-    override func mouseEntered(with event: NSEvent) { hovering = true }
-    override func mouseExited(with event: NSEvent) { hovering = false }
 
     override func draw(_ dirtyRect: NSRect) {
         let accent = NSColor.controlAccentColor.usingColorSpace(.sRGB) ?? .systemBlue
@@ -747,9 +862,8 @@ private final class DoneButton: NSButton {
 
         // Checkmark and label sit as one centered group, both centered on
         // the label's cap height so the glyphs line up optically.
-        let textWidth = label.size().width
         let checkSize = check?.size ?? .zero
-        let content = (check == nil ? 0 : checkSize.width + gap) + textWidth
+        let content = (check == nil ? 0 : checkSize.width + gap) + label.size().width
         var x = ((bounds.width - content) / 2).rounded()
         let mid = bounds.midY
         if let check {
@@ -760,607 +874,4 @@ private final class DoneButton: NSButton {
         let baseline = (mid - Self.labelFont.capHeight / 2).rounded()
         label.draw(at: NSPoint(x: x, y: baseline + Self.labelFont.descender))
     }
-}
-
-// MARK: - Canvas
-
-/// The image plus everything painted on it. See the architecture note at
-/// the top of the file.
-@MainActor
-final class CanvasView: NSView, NSTextFieldDelegate {
-    struct Style {
-        var color: NSColor
-        /// 0 thin, 1 medium, 2 thick.
-        var size: Int
-    }
-
-    var tool: Annotate.Tool = .rect {
-        didSet {
-            finishText()
-            window?.invalidateCursorRects(for: self)
-        }
-    }
-
-    var style = Style(color: .systemRed, size: 1) {
-        didSet {
-            window?.invalidateCursorRects(for: self)
-            restyleText()
-        }
-    }
-
-    var onKey: (NSEvent) -> Bool = { _ in false }
-    /// Undo/redo availability may have changed.
-    var onChange: () -> Void = {}
-
-    // Sizes in on-screen points, so marks look the same whatever the zoom.
-    private static let strokePoints: [CGFloat] = [2, 4, 7]
-    private static let brushPoints: [CGFloat] = [14, 28, 48]
-    private static let fontPoints: [CGFloat] = [14, 20, 30]
-
-    private var base: CGImage!
-    private var ci: CIContext!
-    private var space: CGColorSpace!
-    private var marks: CGContext!
-    private var filtered: [Annotate.Tool: CGImage] = [:]
-
-    /// One undoable step: the pixels of `rect` in the marks bitmap.
-    private struct Edit {
-        let rect: CGRect
-        let before: CGImage?
-        let after: CGImage?
-    }
-    private var undoStack: [Edit] = []
-    private var redoStack: [Edit] = []
-    private let maxUndo = 60
-
-    /// Everything a mark needs to be previewed and rasterized.
-    private enum Mark {
-        case stroke(CGPath, width: CGFloat, color: CGColor, join: CGLineJoin = .round)
-        case fill(CGPath, color: CGColor)
-        case brush(CGPath, width: CGFloat, image: CGImage)
-        /// Text draws itself: the field's own cell, replayed at image
-        /// resolution, so the set-down text is exactly what was typed.
-        case text(bounds: CGRect, draw: (CGContext) -> Void)
-    }
-
-    private var dragStart: CGPoint?
-    private var dragEnd: CGPoint?
-    private var points: [CGPoint] = []
-    private var editingText: NSTextField?
-
-    private let stage = Stage()
-    private let imageLayer = CALayer()
-    private let marksLayer = CALayer()
-    private let liveShape = CAShapeLayer()
-    private let liveFiltered = CALayer()
-    private let liveMask = CAShapeLayer()
-    private var cursors: [CGFloat: NSCursor] = [:]
-
-    var canUndo: Bool { !undoStack.isEmpty || editingText != nil }
-    var canRedo: Bool { !redoStack.isEmpty }
-    var isDirty: Bool { !undoStack.isEmpty }
-
-    /// While text is being typed the field keeps the keyboard: a click on
-    /// the canvas then sets the text down instead of stealing focus.
-    override var acceptsFirstResponder: Bool { editingText == nil }
-
-    override func keyDown(with event: NSEvent) {
-        if !onKey(event) { super.keyDown(with: event) }
-    }
-
-    private var imageRect: CGRect { CGRect(x: 0, y: 0, width: base.width, height: base.height) }
-    /// On-screen points per image pixel.
-    private var scale: CGFloat { bounds.width / CGFloat(base.width) }
-    private var strokeWidth: CGFloat { Self.strokePoints[style.size] / scale }
-    private var brushWidth: CGFloat { Self.brushPoints[style.size] / scale }
-
-    func configure(base: CGImage, ci: CIContext) {
-        self.base = base
-        self.ci = ci
-        let rgb = base.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
-        space = rgb ?? CGColorSpace(name: CGColorSpace.sRGB)!
-
-        wantsLayer = true
-        layer?.backgroundColor = NSColor.black.cgColor
-        // A hairline and a shadow, so a dark screenshot still has an edge on
-        // the dark backdrop.
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor(white: 1, alpha: 0.10).cgColor
-        shadow = {
-            let s = NSShadow()
-            s.shadowColor = NSColor.black.withAlphaComponent(0.55)
-            s.shadowBlurRadius = 24
-            s.shadowOffset = NSSize(width: 0, height: -6)
-            return s
-        }()
-
-        stage.frame = bounds
-        stage.autoresizingMask = [.width, .height]
-        stage.wantsLayer = true
-        addSubview(stage)
-        for l in [imageLayer, marksLayer, liveFiltered, liveShape] as [CALayer] {
-            l.frame = bounds
-            stage.layer?.addSublayer(l)
-        }
-        imageLayer.contents = base
-        imageLayer.magnificationFilter = .nearest
-        liveShape.fillColor = nil
-        liveShape.lineCap = .round
-        liveShape.lineJoin = .round
-        liveMask.frame = bounds
-        liveMask.fillColor = nil
-        liveMask.strokeColor = NSColor.black.cgColor
-        liveMask.lineCap = .round
-        liveMask.lineJoin = .round
-        liveFiltered.mask = liveMask
-
-        marks = CGContext(data: nil, width: base.width, height: base.height,
-                          bitsPerComponent: 8, bytesPerRow: 0, space: space,
-                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-    }
-
-    private func imagePoint(_ event: NSEvent) -> CGPoint {
-        let v = convert(event.locationInWindow, from: nil)
-        return CGPoint(x: v.x / scale, y: v.y / scale)
-    }
-
-    // MARK: Cursor
-
-    override func resetCursorRects() {
-        switch tool {
-        case .text: addCursorRect(bounds, cursor: .iBeam)
-        case .mosaic, .blur: addCursorRect(bounds, cursor: brushCursor(Self.brushPoints[style.size]))
-        default: addCursorRect(bounds, cursor: .crosshair)
-        }
-    }
-
-    /// A ring the size of the brush, legible on light and dark pixels.
-    private func brushCursor(_ diameter: CGFloat) -> NSCursor {
-        if let c = cursors[diameter] { return c }
-        let side = diameter + 4
-        let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { r in
-            let ring = NSBezierPath(ovalIn: r.insetBy(dx: 2, dy: 2))
-            ring.lineWidth = 3
-            NSColor.black.withAlphaComponent(0.55).setStroke()
-            ring.stroke()
-            ring.lineWidth = 1.25
-            NSColor.white.setStroke()
-            ring.stroke()
-            return true
-        }
-        let cursor = NSCursor(image: image, hotSpot: NSPoint(x: side / 2, y: side / 2))
-        cursors[diameter] = cursor
-        return cursor
-    }
-
-    // MARK: Filters for mosaic and blur
-
-    /// The whole image pixellated or blurred once, at full resolution. The
-    /// mosaic grid is anchored at the image origin, so every stroke lines up.
-    private func filteredImage(for tool: Annotate.Tool) -> CGImage? {
-        if let f = filtered[tool] { return f }
-        let input = CIImage(cgImage: base).clampedToExtent()
-        let output: CIImage
-        if tool == .mosaic {
-            output = input.applyingFilter("CIPixellate", parameters: [
-                kCIInputScaleKey: max(6, (11 / scale).rounded()),
-                kCIInputCenterKey: CIVector(x: 0, y: 0),
-            ])
-        } else {
-            output = input.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: max(6, 8 / scale)])
-        }
-        let image = ci.createCGImage(output.cropped(to: imageRect), from: imageRect,
-                                     format: .RGBA8, colorSpace: space)
-        filtered[tool] = image
-        return image
-    }
-
-    // MARK: Building marks
-
-    /// A smooth path through the pointer samples: quadratic curves between
-    /// midpoints, so fast strokes do not turn into polygons.
-    private static func smoothPath(_ pts: [CGPoint]) -> CGPath {
-        let path = CGMutablePath()
-        guard let first = pts.first else { return path }
-        path.move(to: first)
-        guard pts.count > 1 else {
-            // A single click still leaves a round dot.
-            path.addLine(to: CGPoint(x: first.x + 0.01, y: first.y))
-            return path
-        }
-        for i in 1..<pts.count {
-            let a = pts[i - 1], b = pts[i]
-            path.addQuadCurve(to: CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2), control: a)
-        }
-        path.addLine(to: pts[pts.count - 1])
-        return path
-    }
-
-    /// A filled arrow with a slightly tapered shaft and a solid head.
-    private static func arrowPath(from a: CGPoint, to b: CGPoint, width w: CGFloat) -> CGPath {
-        let path = CGMutablePath()
-        let dx = b.x - a.x, dy = b.y - a.y
-        let length = hypot(dx, dy)
-        guard length > 0.5 else { return path }
-        let ux = dx / length, uy = dy / length
-        let nx = -uy, ny = ux
-        let head = min(length * 0.65, max(w * 4.2, 10))
-        let headHalf = head * 0.5
-        let neckHalf = w * 0.6
-        let tailHalf = w * 0.25
-        let neck = CGPoint(x: b.x - ux * head * 0.82, y: b.y - uy * head * 0.82)
-        let wing = CGPoint(x: b.x - ux * head, y: b.y - uy * head)
-        func p(_ o: CGPoint, _ k: CGFloat) -> CGPoint { CGPoint(x: o.x + nx * k, y: o.y + ny * k) }
-        path.move(to: p(a, tailHalf))
-        path.addLine(to: p(neck, neckHalf))
-        path.addLine(to: p(wing, headHalf))
-        path.addLine(to: b)
-        path.addLine(to: p(wing, -headHalf))
-        path.addLine(to: p(neck, -neckHalf))
-        path.addLine(to: p(a, -tailHalf))
-        path.closeSubpath()
-        return path
-    }
-
-    /// Shift makes squares and circles, and snaps arrows to 45 degrees.
-    private func constrained(_ a: CGPoint, _ b: CGPoint, shift: Bool) -> CGPoint {
-        guard shift else { return b }
-        let dx = b.x - a.x, dy = b.y - a.y
-        if tool == .rect || tool == .ellipse {
-            let side = max(abs(dx), abs(dy))
-            return CGPoint(x: a.x + (dx < 0 ? -side : side), y: a.y + (dy < 0 ? -side : side))
-        }
-        let angle = (atan2(dy, dx) / (.pi / 4)).rounded() * (.pi / 4)
-        let length = hypot(dx, dy)
-        return CGPoint(x: a.x + cos(angle) * length, y: a.y + sin(angle) * length)
-    }
-
-    private func currentMark(shift: Bool) -> Mark? {
-        guard let a = dragStart, var b = dragEnd else { return nil }
-        let color = style.color.cgColor
-        switch tool {
-        case .rect, .ellipse:
-            b = constrained(a, b, shift: shift)
-            let r = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
-            guard r.width > 2 || r.height > 2 else { return nil }
-            return tool == .rect
-                ? .stroke(CGPath(rect: r, transform: nil), width: strokeWidth, color: color, join: .miter)
-                : .stroke(CGPath(ellipseIn: r, transform: nil), width: strokeWidth, color: color)
-        case .arrow:
-            b = constrained(a, b, shift: shift)
-            guard hypot(b.x - a.x, b.y - a.y) > strokeWidth * 2 else { return nil }
-            return .fill(Self.arrowPath(from: a, to: b, width: strokeWidth), color: color)
-        case .pen:
-            return .stroke(Self.smoothPath(points), width: strokeWidth, color: color)
-        case .mosaic, .blur:
-            guard let image = filteredImage(for: tool) else { return nil }
-            return .brush(Self.smoothPath(points), width: brushWidth, image: image)
-        case .text:
-            return nil
-        }
-    }
-
-    // MARK: Live preview
-
-    private func showLive(_ mark: Mark?) {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        defer { CATransaction.commit() }
-        liveShape.path = nil
-        liveMask.path = nil
-        guard let mark else { return }
-        var t = CGAffineTransform(scaleX: scale, y: scale)
-        switch mark {
-        case let .stroke(path, width, color, join):
-            liveShape.path = path.copy(using: &t)
-            liveShape.lineWidth = width * scale
-            liveShape.lineJoin = join == .miter ? .miter : .round
-            liveShape.strokeColor = color
-            liveShape.fillColor = nil
-        case let .fill(path, color):
-            liveShape.path = path.copy(using: &t)
-            liveShape.lineWidth = 0
-            liveShape.strokeColor = nil
-            liveShape.fillColor = color
-        case let .brush(path, width, image):
-            liveFiltered.contents = image
-            liveMask.path = path.copy(using: &t)
-            liveMask.lineWidth = width * scale
-        case .text:
-            break
-        }
-    }
-
-    // MARK: Mouse
-
-    override func mouseDown(with event: NSEvent) {
-        // A click while typing just sets the text down.
-        if editingText != nil {
-            finishText()
-            return
-        }
-        window?.makeFirstResponder(self)
-        if tool == .text {
-            placeText(at: convert(event.locationInWindow, from: nil))
-            return
-        }
-        let p = imagePoint(event)
-        dragStart = p
-        dragEnd = p
-        points = [p]
-        if tool == .pen || tool == .mosaic || tool == .blur {
-            showLive(currentMark(shift: false))
-        }
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        guard dragStart != nil else { return }
-        let p = imagePoint(event)
-        dragEnd = p
-        if let last = points.last, hypot(p.x - last.x, p.y - last.y) >= 0.75 / scale {
-            points.append(p)
-        }
-        showLive(currentMark(shift: event.modifierFlags.contains(.shift)))
-    }
-
-    override func flagsChanged(with event: NSEvent) {
-        guard dragStart != nil, tool.isShape else { return super.flagsChanged(with: event) }
-        showLive(currentMark(shift: event.modifierFlags.contains(.shift)))
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        guard dragStart != nil else { return }
-        if tool.isShape { dragEnd = imagePoint(event) }
-        let mark = currentMark(shift: event.modifierFlags.contains(.shift))
-        dragStart = nil
-        dragEnd = nil
-        points = []
-        if let mark { commit(mark) }
-        showLive(nil)
-    }
-
-    // MARK: Text
-
-    private var fontSize: CGFloat { Self.fontPoints[style.size] }
-
-    private func textFont(_ size: CGFloat) -> NSFont { .systemFont(ofSize: size, weight: .semibold) }
-
-    /// A soft dark shadow lifts colored and white ink off any screenshot.
-    /// Only near-black ink gets a light halo: a white glow around red or
-    /// blue on a dark screenshot just reads as a smudge.
-    private func halo(for color: NSColor, blur: CGFloat) -> NSShadow {
-        let s = NSShadow()
-        let rgb = color.usingColorSpace(.sRGB) ?? color
-        let dark = 0.299 * rgb.redComponent + 0.587 * rgb.greenComponent + 0.114 * rgb.blueComponent < 0.2
-        s.shadowColor = dark ? NSColor.white.withAlphaComponent(0.7) : NSColor.black.withAlphaComponent(0.5)
-        s.shadowBlurRadius = blur
-        s.shadowOffset = .zero
-        return s
-    }
-
-    private func placeText(at viewPoint: NSPoint) {
-        let field = NSTextField(string: "")
-        field.isBordered = false
-        field.isBezeled = false
-        field.drawsBackground = false
-        field.focusRingType = .none
-        field.usesSingleLineMode = true
-        field.cell?.isScrollable = true
-        field.cell?.wraps = false
-        field.delegate = self
-        field.placeholderString = L("Type…", ["es": "Escribe…", "zh": "输入文字…", "zh-Hant": "輸入文字…"])
-        field.wantsLayer = true
-        field.layer?.cornerRadius = 3
-        field.layer?.borderWidth = 1
-        field.layer?.borderColor = NSColor(white: 1, alpha: 0.55).cgColor
-        field.layer?.backgroundColor = NSColor(white: 0, alpha: 0.12).cgColor
-        addSubview(field)
-        editingText = field
-        restyleText()
-        // The click marks the start of the text, centered on its line.
-        field.setFrameOrigin(NSPoint(x: viewPoint.x - 3, y: viewPoint.y - field.frame.height / 2))
-        window?.makeFirstResponder(field)
-        onChange()
-    }
-
-    /// The field follows the current color and size while you type.
-    private func restyleText() {
-        guard let field = editingText else { return }
-        field.font = textFont(fontSize)
-        field.textColor = style.color
-        field.shadow = halo(for: style.color, blur: 2)
-        sizeField(field)
-    }
-
-    private func sizeField(_ field: NSTextField) {
-        let text = field.stringValue.isEmpty ? (field.placeholderString ?? "") : field.stringValue
-        let font = field.font ?? textFont(fontSize)
-        let width = (text as NSString).size(withAttributes: [.font: font]).width
-        let height = ceil(font.ascender - font.descender + font.leading) + 4
-        let center = field.frame.midY
-        field.frame.size = NSSize(width: ceil(width) + 12, height: height)
-        if field.superview != nil { field.frame.origin.y = (center - height / 2).rounded() }
-    }
-
-    func controlTextDidChange(_ note: Notification) {
-        if let field = editingText { sizeField(field) }
-    }
-
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-        if selector == #selector(NSResponder.cancelOperation(_:)) {
-            cancelText()
-            return true
-        }
-        if selector == #selector(NSResponder.insertNewline(_:)) {
-            finishText()
-            return true
-        }
-        return false
-    }
-
-    func controlTextDidEndEditing(_ note: Notification) {
-        finishText()
-    }
-
-    private func cancelText() {
-        guard let field = editingText else { return }
-        editingText = nil
-        field.removeFromSuperview()
-        window?.makeFirstResponder(self)
-        onChange()
-    }
-
-    func finishText() {
-        guard let field = editingText else { return }
-        editingText = nil
-        let text = field.stringValue
-        // Ending the edit hands the text from the field editor to the cell.
-        window?.makeFirstResponder(self)
-        field.stringValue = text
-        field.removeFromSuperview()
-        defer { onChange() }
-        guard !text.trimmingCharacters(in: .whitespaces).isEmpty, let cell = field.cell else { return }
-
-        // Replay the cell in the field's own flipped space, scaled from view
-        // points to image pixels. Shadows ignore the transform, so the halo
-        // is sized in pixels.
-        let frame = field.frame
-        let s = scale
-        let halo = halo(for: field.textColor ?? style.color, blur: 2 / s)
-        let bounds = CGRect(x: frame.minX / s, y: frame.minY / s,
-                            width: frame.width / s, height: frame.height / s)
-            .insetBy(dx: -4 / s, dy: -4 / s)
-        commit(.text(bounds: bounds) { ctx in
-            ctx.translateBy(x: frame.minX / s, y: frame.maxY / s)
-            ctx.scaleBy(x: 1 / s, y: -1 / s)
-            NSGraphicsContext.saveGraphicsState()
-            NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
-            halo.set()
-            cell.drawInterior(withFrame: NSRect(origin: .zero, size: frame.size), in: field)
-            NSGraphicsContext.restoreGraphicsState()
-        })
-    }
-
-    // MARK: Rasterizing and history
-
-    private func bounds(of mark: Mark) -> CGRect {
-        switch mark {
-        case let .stroke(path, width, _, join):
-            return path.copy(strokingWithWidth: width, lineCap: .round, lineJoin: join, miterLimit: 10)
-                .boundingBoxOfPath
-        case let .brush(path, width, _):
-            return path.copy(strokingWithWidth: width, lineCap: .round, lineJoin: .round, miterLimit: 10)
-                .boundingBoxOfPath
-        case let .fill(path, _):
-            return path.boundingBoxOfPath
-        case let .text(bounds, _):
-            return bounds
-        }
-    }
-
-    private func draw(_ mark: Mark, in ctx: CGContext) {
-        ctx.saveGState()
-        defer { ctx.restoreGState() }
-        switch mark {
-        case let .stroke(path, width, color, join):
-            ctx.addPath(path)
-            ctx.setLineWidth(width)
-            ctx.setLineCap(.round)
-            ctx.setLineJoin(join)
-            ctx.setStrokeColor(color)
-            ctx.strokePath()
-        case let .fill(path, color):
-            ctx.addPath(path)
-            ctx.setFillColor(color)
-            ctx.fillPath()
-        case let .brush(path, width, image):
-            ctx.addPath(path)
-            ctx.setLineWidth(width)
-            ctx.setLineCap(.round)
-            ctx.setLineJoin(.round)
-            ctx.replacePathWithStrokedPath()
-            ctx.clip()
-            ctx.draw(image, in: imageRect)
-        case let .text(_, drawText):
-            drawText(ctx)
-        }
-    }
-
-    private func commit(_ mark: Mark) {
-        let dirty = bounds(of: mark).insetBy(dx: -2, dy: -2).integral.intersection(imageRect)
-        guard !dirty.isNull, dirty.width >= 1, dirty.height >= 1 else { return }
-        let before = snapshot(dirty)
-        draw(mark, in: marks)
-        let after = snapshot(dirty)
-        undoStack.append(Edit(rect: dirty, before: before, after: after))
-        if undoStack.count > maxUndo { undoStack.removeFirst(undoStack.count - maxUndo) }
-        redoStack.removeAll()
-        showMarks()
-        onChange()
-    }
-
-    /// A detached copy of one rectangle of the marks bitmap.
-    private func snapshot(_ rect: CGRect) -> CGImage? {
-        // CGImage cropping counts rows from the top.
-        let flipped = CGRect(x: rect.minX, y: CGFloat(base.height) - rect.maxY,
-                             width: rect.width, height: rect.height)
-        guard let crop = marks.makeImage()?.cropping(to: flipped),
-              let ctx = CGContext(data: nil, width: Int(rect.width), height: Int(rect.height),
-                                  bitsPerComponent: 8, bytesPerRow: 0, space: space,
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        ctx.draw(crop, in: CGRect(origin: .zero, size: rect.size))
-        return ctx.makeImage()
-    }
-
-    private func restore(_ image: CGImage?, in rect: CGRect) {
-        marks.saveGState()
-        marks.clip(to: rect)
-        marks.clear(rect)
-        if let image { marks.draw(image, in: rect) }
-        marks.restoreGState()
-        showMarks()
-    }
-
-    private func showMarks() {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        marksLayer.contents = marks.makeImage()
-        CATransaction.commit()
-    }
-
-    func undo() {
-        if editingText != nil {
-            cancelText()
-            return
-        }
-        guard let edit = undoStack.popLast() else { return }
-        restore(edit.before, in: edit.rect)
-        redoStack.append(edit)
-        onChange()
-    }
-
-    func redo() {
-        guard editingText == nil, let edit = redoStack.popLast() else { return }
-        restore(edit.after, in: edit.rect)
-        undoStack.append(edit)
-        onChange()
-    }
-
-    /// The image with every mark composited, at the file's own resolution.
-    func bake() -> CGImage? {
-        guard let marksImage = marks.makeImage() else { return nil }
-        let opaque = [.none, .noneSkipLast, .noneSkipFirst].contains(base.alphaInfo)
-        let info = opaque ? CGImageAlphaInfo.noneSkipLast : .premultipliedLast
-        let out = CGContext(data: nil, width: base.width, height: base.height,
-                            bitsPerComponent: 8, bytesPerRow: 0, space: space,
-                            bitmapInfo: info.rawValue)
-        out?.draw(base, in: imageRect)
-        out?.draw(marksImage, in: imageRect)
-        return out?.makeImage()
-    }
-}
-
-/// Hosts the canvas layers. Never takes a click: those belong to the canvas.
-private final class Stage: NSView {
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

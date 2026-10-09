@@ -344,7 +344,7 @@ final class CanvasView: NSView, NSTextViewDelegate {
 
     // MARK: Text layout
 
-    private static let placeholder = L("Type…", ["es": "Escribe…", "zh": "输入文字…", "zh-Hant": "輸入文字…"])
+    private static let placeholder = L("Type…")
 
     private static func font(_ m: Mark, size: CGFloat? = nil) -> NSFont {
         .systemFont(ofSize: size ?? m.fontSize, weight: .semibold)

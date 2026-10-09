@@ -114,27 +114,27 @@ final class Annotate: NSObject {
 
         var title: String {
             switch self {
-            case .select: return L("Select and move", ["es": "Seleccionar y mover", "zh": "选择/移动", "zh-Hant": "選取/移動"])
-            case .rect: return L("Rectangle", ["es": "Rectángulo", "zh": "矩形", "zh-Hant": "矩形"])
-            case .ellipse: return L("Ellipse", ["es": "Elipse", "zh": "圆形", "zh-Hant": "圓形"])
-            case .arrow: return L("Arrow", ["es": "Flecha", "zh": "箭头", "zh-Hant": "箭頭"])
-            case .pen: return L("Pen", ["es": "Lápiz", "zh": "画笔", "zh-Hant": "畫筆"])
-            case .text: return L("Text", ["es": "Texto", "zh": "文字", "zh-Hant": "文字"])
-            case .textBox: return L("Text box", ["es": "Cuadro de texto", "zh": "文本框", "zh-Hant": "文字框"])
-            case .mosaic: return L("Mosaic", ["es": "Mosaico", "zh": "马赛克", "zh-Hant": "馬賽克"])
-            case .blur: return L("Blur", ["es": "Difuminar", "zh": "模糊", "zh-Hant": "模糊"])
+            case .select: return L("Select and move")
+            case .rect: return L("Rectangle")
+            case .ellipse: return L("Ellipse")
+            case .arrow: return L("Arrow")
+            case .pen: return L("Pen")
+            case .text: return L("Text")
+            case .textBox: return L("Text box")
+            case .mosaic: return L("Mosaic")
+            case .blur: return L("Blur")
             }
         }
     }
 
     /// Ink colors. Red first: it is what annotations are made of.
     static let palette: [(NSColor, String)] = [
-        (NSColor(srgbRed: 1.00, green: 0.23, blue: 0.19, alpha: 1), L("Red", ["es": "Rojo", "zh": "红色", "zh-Hant": "紅色"])),
-        (NSColor(srgbRed: 1.00, green: 0.80, blue: 0.00, alpha: 1), L("Yellow", ["es": "Amarillo", "zh": "黄色", "zh-Hant": "黃色"])),
-        (NSColor(srgbRed: 0.20, green: 0.78, blue: 0.35, alpha: 1), L("Green", ["es": "Verde", "zh": "绿色", "zh-Hant": "綠色"])),
-        (NSColor(srgbRed: 0.04, green: 0.52, blue: 1.00, alpha: 1), L("Blue", ["es": "Azul", "zh": "蓝色", "zh-Hant": "藍色"])),
-        (NSColor.white, L("White", ["es": "Blanco", "zh": "白色", "zh-Hant": "白色"])),
-        (NSColor.black, L("Black", ["es": "Negro", "zh": "黑色", "zh-Hant": "黑色"])),
+        (NSColor(srgbRed: 1.00, green: 0.23, blue: 0.19, alpha: 1), L("Red")),
+        (NSColor(srgbRed: 1.00, green: 0.80, blue: 0.00, alpha: 1), L("Yellow")),
+        (NSColor(srgbRed: 0.20, green: 0.78, blue: 0.35, alpha: 1), L("Green")),
+        (NSColor(srgbRed: 0.04, green: 0.52, blue: 1.00, alpha: 1), L("Blue")),
+        (NSColor.white, L("White")),
+        (NSColor.black, L("Black")),
     ]
 
     /// The original file and what is needed to write it back the same way.
@@ -331,11 +331,11 @@ final class Annotate: NSObject {
 
         stack.addArrangedSubview(Self.divider())
         let undo = HUDButton(symbol: "arrow.uturn.backward", fallback: "↶",
-                             tip: L("Undo", ["es": "Deshacer", "zh": "撤销", "zh-Hant": "撤銷"]) + "   ⌘Z")
+                             tip: L("Undo") + "   ⌘Z")
         undo.target = self
         undo.action = #selector(undo(_:))
         let redo = HUDButton(symbol: "arrow.uturn.forward", fallback: "↷",
-                             tip: L("Redo", ["es": "Rehacer", "zh": "重做", "zh-Hant": "重做"]) + "   ⇧⌘Z")
+                             tip: L("Redo") + "   ⇧⌘Z")
         redo.target = self
         redo.action = #selector(redo(_:))
         undoButton = undo
@@ -345,12 +345,12 @@ final class Annotate: NSObject {
 
         stack.addArrangedSubview(Self.divider())
         let cancel = HUDButton(symbol: "xmark", fallback: "✕",
-                               tip: L("Discard changes", ["es": "Descartar cambios", "zh": "放弃修改", "zh-Hant": "放棄修改"]) + "   Esc")
+                               tip: L("Discard changes") + "   Esc")
         cancel.target = self
         cancel.action = #selector(cancel(_:))
         stack.addArrangedSubview(cancel)
-        let done = DoneButton(title: L("Done", ["es": "Listo", "zh": "完成", "zh-Hant": "完成"]),
-                              tip: L("Save to the file", ["es": "Guardar en el archivo", "zh": "保存到原文件", "zh-Hant": "儲存到原檔案"]) + "   ⏎")
+        let done = DoneButton(title: L("Done"),
+                              tip: L("Save to the file") + "   ⏎")
         done.target = self
         done.action = #selector(commit(_:))
         stack.addArrangedSubview(done)
@@ -471,8 +471,8 @@ final class Annotate: NSObject {
             let points = Int(target.isText ? CanvasView.fontPoints[i]
                              : target.isBrush ? CanvasView.brushPoints[i] : CanvasView.linePoints[i])
             b.toolTip = (target.isText
-                ? L("Text size", ["es": "Tamaño del texto", "zh": "文字大小", "zh-Hant": "文字大小"])
-                : L("Line width", ["es": "Grosor", "zh": "线条粗细", "zh-Hant": "線條粗細"]))
+                ? L("Text size")
+                : L("Line width"))
                 + " \(points) pt" + (i == 0 ? "   [" : i == last ? "   ]" : "")
         }
         let shownColor = canvas.focus.flatMap { m in Self.palette.firstIndex { $0.0 == m.color } } ?? colorIndex
@@ -489,20 +489,11 @@ final class Annotate: NSObject {
         guard let hint, let canvas else { return }
         let text: String
         if canvas.isEditingText {
-            text = L("Esc or click outside  Finish   ·   ⏎ New line   ·   ⌘Z Undo typing   ·   Size and color apply as you type",
-                     ["es": "Esc o clic fuera  Terminar   ·   ⏎ Nueva línea   ·   ⌘Z Deshacer   ·   Tamaño y color se aplican al escribir",
-                      "zh": "Esc 或点击空白处  完成输入   ·   ⏎ 换行   ·   ⌘Z 撤销输入   ·   字号和颜色可边打边改",
-                      "zh-Hant": "Esc 或點擊空白處  完成輸入   ·   ⏎ 換行   ·   ⌘Z 撤銷輸入   ·   字號和顏色可邊打邊改"])
+            text = L("Esc or click outside  Finish   ·   ⏎ New line   ·   ⌘Z Undo typing   ·   Size and color apply as you type")
         } else if canvas.focus != nil {
-            text = L("Drag to move   ·   Drag the handles to resize   ·   ⌫ Delete   ·   ←↑↓→ Nudge   ·   ⌘D Duplicate   ·   Double-click text to edit",
-                     ["es": "Arrastra para mover   ·   Tiradores para cambiar el tamaño   ·   ⌫ Borrar   ·   ←↑↓→ Mover   ·   ⌘D Duplicar   ·   Doble clic para editar el texto",
-                      "zh": "拖动移动   ·   拖动手柄缩放   ·   ⌫ 删除   ·   ←↑↓→ 微调   ·   ⌘D 复制   ·   双击文字可修改",
-                      "zh-Hant": "拖動移動   ·   拖動控點縮放   ·   ⌫ 刪除   ·   ←↑↓→ 微調   ·   ⌘D 複製   ·   雙擊文字可修改"])
+            text = L("Drag to move   ·   Drag the handles to resize   ·   ⌫ Delete   ·   ←↑↓→ Nudge   ·   ⌘D Duplicate   ·   Double-click text to edit")
         } else {
-            text = L("⏎ Done   ·   Esc Cancel   ·   ⌘Z Undo   ·   V Select   ·   1–8 Tools   ·   [ ] Size   ·   ⇧ Straight / square / circle   ·   Pinch or ⌘± Zoom   ·   Space-drag Pan",
-                     ["es": "⏎ Listo   ·   Esc Cancelar   ·   ⌘Z Deshacer   ·   V Seleccionar   ·   1–8 Herramientas   ·   [ ] Tamaño   ·   ⇧ Recto / cuadrado / círculo   ·   Pellizca o ⌘± Zoom   ·   Espacio + arrastrar Mover",
-                      "zh": "⏎ 完成   ·   Esc 取消   ·   ⌘Z 撤销   ·   V 选择   ·   1–8 切换工具   ·   [ ] 粗细/字号   ·   ⇧ 水平/正方形/正圆   ·   双指捏合或 ⌘± 缩放   ·   空格+拖动 平移",
-                      "zh-Hant": "⏎ 完成   ·   Esc 取消   ·   ⌘Z 撤銷   ·   V 選取   ·   1–8 切換工具   ·   [ ] 粗細/字號   ·   ⇧ 水平/正方形/正圓   ·   雙指捏合或 ⌘± 縮放   ·   空白鍵+拖動 平移"])
+            text = L("⏎ Done   ·   Esc Cancel   ·   ⌘Z Undo   ·   V Select   ·   1–8 Tools   ·   [ ] Size   ·   ⇧ Straight / square / circle   ·   Pinch or ⌘± Zoom   ·   Space-drag Pan")
         }
         guard hint.stringValue != text else { return }
         hint.stringValue = text
@@ -528,10 +519,7 @@ final class Annotate: NSObject {
             return
         }
         escapeArmedUntil = Date().addingTimeInterval(2)
-        showToast(L("Press Esc again to discard your changes",
-                    ["es": "Pulsa Esc otra vez para descartar los cambios",
-                     "zh": "再按一次 Esc 放弃修改",
-                     "zh-Hant": "再按一次 Esc 放棄修改"]))
+        showToast(L("Press Esc again to discard your changes"))
     }
 
     /// Canvas keyboard entry. Text being typed gets its keys first.

@@ -61,7 +61,7 @@ struct LineView: View {
 
 private struct Hint: View {
     var body: some View {
-        Text(L("Take a screenshot and it will hang here", ["es": "Haz una captura y se quedará colgada aquí", "zh": "截一张图，它就会挂在这里", "zh-Hant": "截一張圖，它就會掛在這裡"]))
+        Text(L("Take a screenshot and it will hang here"))
             .font(.system(size: 12, weight: .medium, design: .rounded))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 12)

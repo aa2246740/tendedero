@@ -45,28 +45,28 @@ struct GrabArea: NSViewRepresentable {
         view.onDropIn = { urls in for url in Inbox.copyIn(urls) { line.hang(url) } }
         view.menuProvider = {
             let menu = NSMenu()
-            menu.addItem(ClosureMenuItem(L("Copy", ["es": "Copiar", "zh": "复制", "zh-Hant": "複製"])) { line.copy(id) })
-            menu.addItem(ClosureMenuItem(L("Open", ["es": "Abrir", "zh": "打开", "zh-Hant": "打開"])) { line.open(id) })
-            menu.addItem(ClosureMenuItem(L("Annotate", ["es": "Anotar", "zh": "标注", "zh-Hant": "標註"])) { line.markup(id) })
-            menu.addItem(ClosureMenuItem(L("Share…", ["es": "Compartir…", "zh": "分享…", "zh-Hant": "分享…"])) {
+            menu.addItem(ClosureMenuItem(L("Copy")) { line.copy(id) })
+            menu.addItem(ClosureMenuItem(L("Open")) { line.open(id) })
+            menu.addItem(ClosureMenuItem(L("Annotate")) { line.markup(id) })
+            menu.addItem(ClosureMenuItem(L("Share…")) {
                 NSSharingServicePicker(items: [item.url]).show(relativeTo: view.bounds, of: view, preferredEdge: .minY)
             })
             if let airdrop = NSSharingService(named: NSSharingService.Name("com.apple.share.AirDrop.send")) {
-                menu.addItem(ClosureMenuItem(L("AirDrop", ["es": "AirDrop", "zh": "隔空投送", "zh-Hant": "AirDrop"])) {
+                menu.addItem(ClosureMenuItem(L("AirDrop")) {
                     airdrop.perform(withItems: [item.url])
                 })
             }
-            menu.addItem(ClosureMenuItem(L("Show in Finder", ["es": "Mostrar en Finder", "zh": "在 Finder 中显示", "zh-Hant": "在 Finder 中顯示"])) { line.reveal(id) })
+            menu.addItem(ClosureMenuItem(L("Show in Finder")) { line.reveal(id) })
             let inInbox = line.isInInbox(id)
             if inInbox {
-                menu.addItem(ClosureMenuItem(L("Save to Desktop", ["es": "Guardar en el Escritorio", "zh": "存到桌面", "zh-Hant": "存到桌面"])) { line.saveToDesktop(id) })
+                menu.addItem(ClosureMenuItem(L("Save to Desktop")) { line.saveToDesktop(id) })
             }
             menu.addItem(.separator())
             if inInbox {
-                menu.addItem(ClosureMenuItem(L("Discard", ["es": "Descartar", "zh": "丢弃", "zh-Hant": "丟棄"])) { line.discard(id) })
+                menu.addItem(ClosureMenuItem(L("Discard")) { line.discard(id) })
             } else {
-                menu.addItem(ClosureMenuItem(L("Take down", ["es": "Descolgar", "zh": "取下", "zh-Hant": "取下"])) { line.discard(id) })
-                menu.addItem(ClosureMenuItem(L("Move to Trash", ["es": "Mover a la Papelera", "zh": "移到废纸篓", "zh-Hant": "移到垃圾桶"])) { line.trash(id) })
+                menu.addItem(ClosureMenuItem(L("Take down")) { line.discard(id) })
+                menu.addItem(ClosureMenuItem(L("Move to Trash")) { line.trash(id) })
             }
             return menu
         }

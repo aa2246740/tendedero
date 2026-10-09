@@ -4,26 +4,28 @@ The maintained index of what a user can do, and where each verification must loo
 
 | Feature | File | One-line scope |
 |---|---|---|
-| Clothesline | `line.md` | screenshots hang, hover reveals, capacity & prune |
-| Cards | `cards.md` | click=copy, hold=annotate, drag=share/save, ×=discard |
+| Clothesline | `line.md` | screenshots hang, icon-hover reveals, menu-bar-away, capacity & prune |
+| Cards | `cards.md` | click=copy, hold=annotate, context menu, share/save, ×=discard, drop-to-hang |
+| Annotate | `annotate.md` | in-place editor: tools, sizes, colors, editable marks, undo, faithful save |
 | Inbox mode | `inbox.md` | redirect screenshots to the hidden folder; restore on quit |
 | Reclaim space | `reclaim-space.md` | Empty folder (size shown) + Auto-clean after 7 days |
-| Prefs & quit | `prefs.md` | Sounds, Open at login, hotkey, settings restore |
+| Prefs & quit | `prefs.md` | Sounds, Open at login, hotkey, clipboard hang, settings restore |
 
 ## Baseline preconditions
 
 - `scripts/build-app.sh` produced `build/Tendedero.app` in THIS run — never verify a binary from an earlier checkout.
 - Launched via `open -n build/Tendedero.app`; doctor (see SKILL.md) green. The Desktop-access TCC prompt is answered — an unanswered prompt parks the whole app before the status item exists.
 - No other `Tendedero` process: `pgrep -x Tendedero` returns one PID. Kill leftovers from earlier runs first (`kill -TERM`).
-- Tools on PATH: `screencapture`, `defaults`, `SetFile` (Xcode CLT), `log`. The `computer` tool for input.
+- Tools on PATH: `screencapture`, `defaults`, `SetFile` (Xcode CLT), `sips`, `log`. The `computer` tool for input.
 - Evidence dir `~/tendedero-verify/<run-name>/` created before driving.
 
 ## Driving conventions
 
 - Menu titles are live (rebuilt per open): read them from a screenshot of the open menu, not from memory of the source.
 - A real "screenshot lands" event = `screencapture -x <inbox-or-Desktop>/name.png`. In inbox mode any image file works; on the Desktop only files carrying `com.apple.metadata:kMDItemIsScreenCapture` hang — a plain `cp` to the Desktop is NOT equivalent.
+- Reveal = rest the pointer on the t-shirt icon (~0.25 s), not the screen's top edge; a click anywhere in the menu bar puts the line away.
 - Back-dating a file's AGE for reclaim tests: `SetFile -d "MM/DD/YYYY HH:MM:SS" <file>` sets creation date (what `clean` reads); `touch -t` only changes mtime and does NOT age a file.
-- Cards are not accessible elements — their proof is pixels in a screenshot.
+- Cards are not accessible elements — their proof is pixels in a screenshot plus the `pegged` list.
 - Never `defaults write com.apple.screencapture` while the app runs; drive Handle screenshots through its menu item.
 - Cleanup removes the run's process and fixtures, never `~/tendedero-verify/` artifacts.
 
